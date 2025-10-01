@@ -1,7 +1,190 @@
 ﻿@page "/"
+@inject MotorManager Manager
+@using BlazorApp2.Services
+@rendermode InteractiveServer
 
-<PageTitle>Home</PageTitle>
+<style>
+    .grid-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr; /* 2 cột */
+        grid-template-rows: auto auto; /* 2 hàng */
+        gap: 20px;
+        padding: 10px;
+    }
 
-<h1>Hello, world!</h1>
+    .grid-item {
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        padding: 15px;
+        background: #f9f9f9;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+    }
 
-Welcome to your new app.
+    .log-box {
+        max-height: 250px;
+        overflow-y: auto;
+        font-family: monospace;
+        background: #111;
+        color: #0f0;
+        padding: 10px;
+        border-radius: 5px;
+    }
+</style>
+
+<h3>Điều khiển Motor CiA402</h3>
+
+<div class="grid-container">
+    <!-- 1.1 Trạng thái -->
+    <div class="grid-item">
+        <div>
+            <h3>Trạng thái</h3>
+            <button class="btn btn-success" @onclick="DoConnect">Connect</button>
+            <p>@(Manager.IsConnected ? "Đã kết nối CAN" : "Chưa kết nối")</p>
+        </div>
+        <h5>Trạng thái hiện tại</h5>
+        <p>Vị trí: @position</p>
+        <p>Vận tốc: @velocity</p>
+        <p>Mô-men: @torque</p>
+        <p>Status Word: 0x@status:X4</p>
+    </div>
+
+    <!-- 1.2 Các nút điều khiển -->
+    <div class="grid-item">
+        <h5>Điều khiển</h5>
+
+        <div class="mb-3">
+            <h6>Homing</h6>
+            <input @bind="homingMethod" type="number" min="1" max="35" />
+            <button class="btn btn-primary" @onclick="DoHoming">Bắt đầu Homing</button>
+        </div>
+
+        <div class="mb-3">
+            <h6>Position</h6>
+            <input @bind="targetPosition" type="number" />
+            <input @bind="profileVel" type="number" />
+            <button class="btn btn-primary" @onclick="DoMove">Move</button>
+        </div>
+
+        <div class="mb-3">
+            <h6>Velocity</h6>
+            <input @bind="targetVel" type="number" />
+            <button class="btn btn-primary" @onclick="DoSetVelocity">Set Velocity</button>
+        </div>
+
+        <div class="mb-3">
+            <h6>Torque</h6>
+            <input @bind="targetTorque" type="number" />
+            <button class="btn btn-primary" @onclick="DoSetTorque">Set Torque</button>
+        </div>
+    </div>
+
+    <!-- 2.1 CANopen Send -->
+    <div class="grid-item">
+        <h5>CANopen Send (cansend)</h5>
+        <div class="log-box">
+            @foreach (var msg in sendLogs)
+            {
+                <div>@msg</div>
+            }
+        </div>
+    </div>
+
+    <!-- 2.2 CANopen Receive -->
+    <div class="grid-item">
+        <h5>CANopen Receive (candump)</h5>
+        <div class="log-box">
+            @foreach (var msg in recvLogs)
+            {
+                <div>@msg</div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    int position = 0;
+    int velocity = 0;
+    short torque = 0;
+    uint status = 0;
+
+    int homingMethod = 1;
+    int targetPosition = 0;
+    uint profileVel = 10000;
+    int targetVel = 0;
+    short targetTorque = 0;
+
+    List<string> sendLogs = new();
+    List<string> recvLogs = new();
+
+    System.Timers.Timer? timer;
+
+    protected override void OnInitialized()
+    {
+        timer = new System.Timers.Timer(500);
+        timer.Elapsed += async (s, e) => await InvokeAsync(UpdateStatus);
+        timer.Start();
+        Manager.OnCanFrameReceived += (msg) =>
+        {
+            InvokeAsync(() =>
+            {
+                recvLogs.Insert(0, msg);
+                if (recvLogs.Count > 100) recvLogs.RemoveAt(recvLogs.Count - 1);
+                StateHasChanged();
+            });
+        };
+        // ví dụ log giả (test giao diện)
+        sendLogs.Insert(0, "cansend can0 201#1122334455667788");
+        recvLogs.Insert(0, "candump can0  201   [8]  11 22 33 44 55 66 77 88");
+    }
+
+    async Task UpdateStatus()
+    {
+        try
+        {
+            position = Manager.GetPosition();
+            velocity = Manager.GetVelocity();
+            torque = Manager.GetTorque();
+            status = Manager.GetStatus();
+            StateHasChanged();
+        }
+        catch { }
+    }
+    void DoConnect()
+    {
+        if (Manager.Connect("can0", 500000, 0x01))
+            sendLogs.Insert(0, "Kết nối CAN thành công!");
+        else
+            sendLogs.Insert(0, "Kết nối CAN thất bại!");
+    }
+
+    void DoHoming()
+    {
+        Manager.StartHoming((byte)homingMethod);
+        sendLogs.Insert(0, $"cansend can0 HomingMethod={homingMethod}");
+    }
+
+    void DoMove()
+    {
+        Manager.MoveToPosition(targetPosition, profileVel);
+        sendLogs.Insert(0, $"cansend can0 Move Pos={targetPosition} Vel={profileVel}");
+    }
+
+    void DoSetVelocity()
+    {
+        Manager.SetVelocity(targetVel);
+        sendLogs.Insert(0, $"cansend can0 Velocity={targetVel}");
+    }
+
+    void DoSetTorque()
+    {
+        Manager.SetTorque(targetTorque);
+        sendLogs.Insert(0, $"cansend can0 Torque={targetTorque}");
+    }
+
+    // Hàm này sau sẽ gắn với sự kiện nhận CAN thực
+    void LogReceive(string msg)
+    {
+        recvLogs.Insert(0, msg);
+        if (recvLogs.Count > 100) recvLogs.RemoveAt(recvLogs.Count - 1);
+    }
+}
