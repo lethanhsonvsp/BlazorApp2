@@ -9,6 +9,8 @@
         private readonly ILogger<MotorHostedService> _logger;
         private readonly UbuntuCANInterface _canInterface;
         private readonly MotorManager _manager;
+        private bool _isReconnecting = false;
+        private DateTime _lastReceived;
 
 
         public MotorHostedService(ILogger<MotorHostedService> logger, UbuntuCANInterface canInterface, MotorManager manager)
@@ -21,40 +23,59 @@
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("MotorHostedService starting");
-
-
-            // Configure CAN - adjust values as needed
-            var connected = _canInterface.Connect("can0", 500000, 1);
-            if (!connected)
-            {
-                _logger.LogError("Cannot connect CAN interface");
-                return;
-            }
-
-
-            // Initialize motor in manager
-            var initOk = _manager.InitializeFromCan(_canInterface, 1);
-            if (!initOk)
-            {
-                _logger.LogError("Motor initialization failed");
-            }
-            else
-            {
-                _logger.LogInformation("Motor initialized and ready");
-            }
-
-
-            // Keep running until stopped
             while (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(1000, stoppingToken);
+                // Nếu chưa connect, thử connect
+                if (!_manager.IsConnected && !_isReconnecting)
+                {
+                    TryReconnect();
+                }
+
+                // Nếu đang connected → kiểm tra timeout
+                if (_manager.IsConnected)
+                {
+                    var now = DateTime.UtcNow;
+                    if ((now - _lastReceived).TotalSeconds > 2) // 2 giây không có data
+                    {
+                        _logger.LogWarning("CAN bus timeout! Disconnecting...");
+                        _manager.Disconnect();
+                        _isReconnecting = false; // cho phép thử reconnect vòng sau
+                    }
+                }
+
+                await Task.Delay(500, stoppingToken);
             }
-
-
-            _logger.LogInformation("MotorHostedService stopping");
         }
-
+        private void TryReconnect()
+        {
+            _isReconnecting = true;
+            _logger.LogInformation("🔄 Trying to reconnect CAN...");
+            try
+            {
+                if (_manager.Connect("can0", 500000, 1))
+                {
+                    _manager.InitializeFromCan(_canInterface, 1);
+                    _lastReceived = DateTime.UtcNow;
+                    _logger.LogInformation("✅ Reconnected to CAN");
+                }
+                else
+                {
+                    _logger.LogWarning("Reconnect failed, retry later...");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Reconnect error");
+            }
+            finally
+            {
+                _isReconnecting = false;
+            }
+        }
+        public void NotifyDataReceived()
+        {
+            _lastReceived = DateTime.UtcNow;
+        }
 
         public override Task StopAsync(CancellationToken cancellationToken)
         {

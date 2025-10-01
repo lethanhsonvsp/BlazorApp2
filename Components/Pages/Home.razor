@@ -29,6 +29,15 @@
         padding: 10px;
         border-radius: 5px;
     }
+
+    .tx {
+        color: #0ff;
+    }
+    /* xanh dương nhạt cho TX */
+    .rx {
+        color: #0f0;
+    }
+    /* xanh lá cho RX */
 </style>
 
 <h3>Điều khiển Motor CiA402</h3>
@@ -38,8 +47,7 @@
     <div class="grid-item">
         <div>
             <h3>Trạng thái</h3>
-            <button class="btn btn-success" @onclick="DoConnect">Connect</button>
-            <p>@(Manager.IsConnected ? "Đã kết nối CAN" : "Chưa kết nối")</p>
+            <p>@(Manager.IsConnected ? "✅ Đã kết nối CAN" : "❌ Chưa kết nối")</p>
         </div>
         <h5>Trạng thái hiện tại</h5>
         <p>Vị trí: @position</p>
@@ -62,6 +70,8 @@
             <h6>Position</h6>
             <input @bind="targetPosition" type="number" />
             <input @bind="profileVel" type="number" />
+            <input @bind="acceleration" type="number" />
+            <input @bind="deceleration" type="number" />
             <button class="btn btn-primary" @onclick="DoMove">Move</button>
         </div>
 
@@ -80,22 +90,22 @@
 
     <!-- 2.1 CANopen Send -->
     <div class="grid-item">
-        <h5>CANopen Send (cansend)</h5>
+        <h5>CANopen Send (TX)</h5>
         <div class="log-box">
-            @foreach (var msg in sendLogs)
+            @foreach (var log in txLogs)
             {
-                <div>@msg</div>
+                <div class="tx">[@log.Timestamp:HH:mm:ss] → @log.Frame</div>
             }
         </div>
     </div>
 
     <!-- 2.2 CANopen Receive -->
     <div class="grid-item">
-        <h5>CANopen Receive (candump)</h5>
+        <h5>CANopen Receive (RX)</h5>
         <div class="log-box">
-            @foreach (var msg in recvLogs)
+            @foreach (var log in rxLogs)
             {
-                <div>@msg</div>
+                <div class="rx">[@log.Timestamp:HH:mm:ss] ← @log.Frame</div>
             }
         </div>
     </div>
@@ -110,11 +120,13 @@
     int homingMethod = 1;
     int targetPosition = 0;
     uint profileVel = 10000;
+    uint acceleration = 1000000;
+    uint deceleration = 1000000;
     int targetVel = 0;
     short targetTorque = 0;
 
-    List<string> sendLogs = new();
-    List<string> recvLogs = new();
+    List<CanLogEntry> txLogs = new();
+    List<CanLogEntry> rxLogs = new();
 
     System.Timers.Timer? timer;
 
@@ -123,18 +135,28 @@
         timer = new System.Timers.Timer(500);
         timer.Elapsed += async (s, e) => await InvokeAsync(UpdateStatus);
         timer.Start();
-        Manager.OnCanFrameReceived += (msg) =>
+
+        Manager.OnCanLog += (entry) =>
         {
             InvokeAsync(() =>
             {
-                recvLogs.Insert(0, msg);
-                if (recvLogs.Count > 100) recvLogs.RemoveAt(recvLogs.Count - 1);
+                if (entry.Direction == "TX")
+                {
+                    txLogs.Insert(0, entry);
+                    if (txLogs.Count > 200) txLogs.RemoveAt(txLogs.Count - 1);
+                }
+                else
+                {
+                    rxLogs.Insert(0, entry);
+                    if (rxLogs.Count > 200) rxLogs.RemoveAt(rxLogs.Count - 1);
+                }
                 StateHasChanged();
             });
         };
-        // ví dụ log giả (test giao diện)
-        sendLogs.Insert(0, "cansend can0 201#1122334455667788");
-        recvLogs.Insert(0, "candump can0  201   [8]  11 22 33 44 55 66 77 88");
+
+        // Log demo test giao diện
+        Manager.LogSend("cansend can0 201#1122334455667788");
+        Manager.LogReceive("candump can0  201   [8]  11 22 33 44 55 66 77 88");
     }
 
     async Task UpdateStatus()
@@ -149,42 +171,28 @@
         }
         catch { }
     }
-    void DoConnect()
-    {
-        if (Manager.Connect("can0", 500000, 0x01))
-            sendLogs.Insert(0, "Kết nối CAN thành công!");
-        else
-            sendLogs.Insert(0, "Kết nối CAN thất bại!");
-    }
 
     void DoHoming()
     {
         Manager.StartHoming((byte)homingMethod);
-        sendLogs.Insert(0, $"cansend can0 HomingMethod={homingMethod}");
+        Manager.LogSend($"HomingMethod={homingMethod}");
     }
 
     void DoMove()
     {
-        Manager.MoveToPosition(targetPosition, profileVel);
-        sendLogs.Insert(0, $"cansend can0 Move Pos={targetPosition} Vel={profileVel}");
+        Manager.MoveToPosition(targetPosition, profileVel, acceleration, deceleration);
+        Manager.LogSend($"Move Pos={targetPosition} Vel={profileVel}");
     }
 
     void DoSetVelocity()
     {
         Manager.SetVelocity(targetVel);
-        sendLogs.Insert(0, $"cansend can0 Velocity={targetVel}");
+        Manager.LogSend($"Velocity={targetVel}");
     }
 
     void DoSetTorque()
     {
         Manager.SetTorque(targetTorque);
-        sendLogs.Insert(0, $"cansend can0 Torque={targetTorque}");
-    }
-
-    // Hàm này sau sẽ gắn với sự kiện nhận CAN thực
-    void LogReceive(string msg)
-    {
-        recvLogs.Insert(0, msg);
-        if (recvLogs.Count > 100) recvLogs.RemoveAt(recvLogs.Count - 1);
+        Manager.LogSend($"Torque={targetTorque}");
     }
 }

@@ -14,7 +14,11 @@ namespace BlazorApp2
         private readonly ConcurrentQueue<string> canFrames = new();
         private volatile bool isMonitoring = false;
 
+        // RX từ candump
         public event EventHandler<string>? CANFrameReceived;
+        // TX sau khi cansend
+        public event EventHandler<string>? CANFrameTransmitted;
+
         public bool IsConnected => isConnected;
 
         public bool Connect(string interfaceName, int baudrate, byte nodeId)
@@ -24,42 +28,35 @@ namespace BlazorApp2
                 canInterface = interfaceName;
                 this.nodeId = nodeId;
 
-                Console.WriteLine($"Thiet lap giao dien CAN {interfaceName} voi baudrate {baudrate}");
+                Console.WriteLine($"Thiết lập CAN {interfaceName} baud {baudrate}");
 
-                // Tắt interface trước
+                // Reset interface
                 ExecuteCommand($"sudo ip link set {interfaceName} down");
-
-                // Cấu hình baudrate
                 ExecuteCommand($"sudo ip link set {interfaceName} type can bitrate {baudrate}");
-
-                // Bật interface
                 var result = ExecuteCommand($"sudo ip link set {interfaceName} up");
 
-                if (result.Contains("error") || result.Contains("Error"))
+                if (result.Contains("error", StringComparison.OrdinalIgnoreCase))
                 {
-                    Console.WriteLine($"Loi thiet lap giao dien CAN: {result}");
+                    Console.WriteLine($"Lỗi setup CAN: {result}");
                     return false;
                 }
 
-                // Kiểm tra trạng thái interface
+                // Kiểm tra
                 var status = ExecuteCommand($"ip -details link show {interfaceName}");
                 if (status.Contains("UP") && status.Contains("can"))
                 {
                     isConnected = true;
-                    Console.WriteLine($"CAN interface {interfaceName} da ket noi thanh cong.");
-                    // Bắt đầu monitor CAN
+                    Console.WriteLine($"CAN interface {interfaceName} OK.");
                     StartCANMonitoring();
                     return true;
                 }
-                else
-                {
-                    Console.WriteLine($"Trang thai interface: {status}");
-                    return false;
-                }
+
+                Console.WriteLine($"Trạng thái interface: {status}");
+                return false;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Loi ket noi CAN: {ex.Message}");
+                Console.WriteLine($"Lỗi connect CAN: {ex.Message}");
                 return false;
             }
         }
@@ -68,6 +65,7 @@ namespace BlazorApp2
         {
             if (isMonitoring) return;
             isMonitoring = true;
+
             Task.Run(() =>
             {
                 try
@@ -88,9 +86,8 @@ namespace BlazorApp2
                     {
                         if (!string.IsNullOrEmpty(e.Data) && isMonitoring)
                         {
-                            // enqueue raw line from candump
                             canFrames.Enqueue(e.Data);
-                            CANFrameReceived?.Invoke(this, e.Data);
+                            CANFrameReceived?.Invoke(this, e.Data); // RX
                         }
                     };
 
@@ -100,11 +97,10 @@ namespace BlazorApp2
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Loi monitor CAN: {ex.Message}");
+                    Console.WriteLine($"Lỗi monitor CAN: {ex.Message}");
                 }
             });
         }
-
 
         public void Disconnect()
         {
@@ -121,7 +117,7 @@ namespace BlazorApp2
 
                 ExecuteCommand($"sudo ip link set {canInterface} down");
                 isConnected = false;
-                Console.WriteLine($"CAN interface {canInterface} da ngat ket noi.");
+                Console.WriteLine($"CAN {canInterface} ngắt kết nối.");
             }
         }
 
@@ -133,34 +129,34 @@ namespace BlazorApp2
             {
                 try
                 {
-                    // Xóa frame cũ
                     while (canFrames.TryDequeue(out _)) { }
 
-                    // Tạo SDO write command
                     byte command = dataSize switch
                     {
-                        1 => 0x2F, // Write 1 byte
-                        2 => 0x2B, // Write 2 bytes
-                        4 => 0x23, // Write 4 bytes
-                        _ => throw new ArgumentException($"Kich thuoc du lieu khong ho tro: {dataSize}")
+                        1 => 0x2F,
+                        2 => 0x2B,
+                        4 => 0x23,
+                        _ => throw new ArgumentException($"Size không hỗ trợ: {dataSize}")
                     };
 
-                    // Tạo CAN frame data (Little Endian)
-                    string frameData = $"{command:X2}{index & 0xFF:X2}{index >> 8 & 0xFF:X2}{subindex:X2}";
-                    frameData += $"{data & 0xFF:X2}{data >> 8 & 0xFF:X2}{data >> 16 & 0xFF:X2}{data >> 24 & 0xFF:X2}";
+                    string frameData =
+                        $"{command:X2}{index & 0xFF:X2}{index >> 8 & 0xFF:X2}{subindex:X2}" +
+                        $"{data & 0xFF:X2}{data >> 8 & 0xFF:X2}{data >> 16 & 0xFF:X2}{data >> 24 & 0xFF:X2}";
 
-                    // Gửi SDO request
                     uint cobId = (uint)(0x600 + nodeId);
-                    ExecuteCommand($"cansend {canInterface} {cobId:X3}#{frameData}");
+                    string cmd = $"cansend {canInterface} {cobId:X3}#{frameData}";
+                    ExecuteCommand(cmd);
 
-                    Console.WriteLine($"SDO Write: Index=0x{index:X4}, Sub=0x{subindex:X2}, Data=0x{data:X8}, Size={dataSize}");
+                    // TX event
+                    CANFrameTransmitted?.Invoke(this, $"{cobId:X3}#{frameData}");
 
-                    // Chờ response
+                    Console.WriteLine($"SDO Write: {cobId:X3}#{frameData}");
+
                     return WaitForSDOResponse((uint)(0x580 + nodeId), true);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Loi WriteSDO: {ex.Message}");
+                    Console.WriteLine($"Lỗi WriteSDO: {ex.Message}");
                     return false;
                 }
             }
@@ -174,98 +170,51 @@ namespace BlazorApp2
             {
                 try
                 {
-                    // Xóa frame cũ
                     while (canFrames.TryDequeue(out _)) { }
 
-                    // Tạo SDO read command
                     string frameData = $"40{index & 0xFF:X2}{index >> 8 & 0xFF:X2}{subindex:X2}00000000";
-
-                    // Gửi SDO read request
                     uint cobId = (uint)(0x600 + nodeId);
-                    ExecuteCommand($"cansend {canInterface} {cobId:X3}#{frameData}");
 
-                    Console.WriteLine($"SDO Read: Index=0x{index:X4}, Sub=0x{subindex:X2}");
+                    string cmd = $"cansend {canInterface} {cobId:X3}#{frameData}";
+                    ExecuteCommand(cmd);
 
-                    // Chờ và đọc response
+                    // TX event
+                    CANFrameTransmitted?.Invoke(this, $"{cobId:X3}#{frameData}");
+
+                    Console.WriteLine($"SDO Read: {cobId:X3}#{frameData}");
+
                     return WaitForSDOReadResponse((uint)(0x580 + nodeId));
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Loi ReadSDO: {ex.Message}");
+                    Console.WriteLine($"Lỗi ReadSDO: {ex.Message}");
                     return 0;
                 }
             }
         }
+
         private static bool TryParseCandumpLine(string line, out uint cobId, out string dataHex)
         {
             cobId = 0;
             dataHex = "";
 
-            // Example candump line:
-            // "  can0  580   [8]  60 00 00 00 00 00 00 00"
-            var idMatch = Regex.Match(line, @"\b([0-9A-Fa-f]{3})\b");
-            if (!idMatch.Success) return false;
+            // "can0  580   [8]  60 00 00 00 00 00 00 00"
+            var match = Regex.Match(line, @"\b([0-9A-Fa-f]{3})\b\s+\[\d+\]\s+([0-9A-Fa-f ]+)");
+            if (!match.Success) return false;
 
-            string idStr = idMatch.Groups[1].Value;
-            if (!uint.TryParse(idStr, System.Globalization.NumberStyles.HexNumber, null, out cobId))
+            if (!uint.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, null, out cobId))
                 return false;
 
-            // Collect all 2-hex-byte sequences as data bytes
-            var dataMatches = Regex.Matches(line, @"\b([0-9A-Fa-f]{2})\b");
-            if (dataMatches.Count == 0) return true; // no data bytes but still return id
-
-            var sb = new System.Text.StringBuilder();
-            foreach (Match m in dataMatches)
-            {
-                sb.Append(m.Groups[1].Value);
-            }
-            dataHex = sb.ToString();
+            dataHex = match.Groups[2].Value.Replace(" ", "");
             return true;
         }
+
         private bool WaitForSDOResponse(uint expectedCOBID, bool isWrite, int timeoutMs = 2000)
         {
-            var startTime = DateTime.Now;
-            while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
+            var start = DateTime.Now;
+            while ((DateTime.Now - start).TotalMilliseconds < timeoutMs)
             {
-                if (canFrames.TryDequeue(out string? frame) && !string.IsNullOrEmpty(frame))
-                {
-                    if (TryParseCandumpLine(frame, out uint cobId, out string dataHex))
-                    {
-                        if (cobId == expectedCOBID)
-                        {
-                            if (string.IsNullOrEmpty(dataHex)) continue;
-                            try
-                            {
-                                byte responseCmd = Convert.ToByte(dataHex[..2], 16);
-
-                                if (responseCmd == 0x80)
-                                {
-                                    Console.WriteLine("SDO Abort nhan duoc");
-                                    return false;
-                                }
-
-                                if (isWrite && responseCmd == 0x60)
-                                {
-                                    return true;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                Thread.Sleep(10);
-            }
-
-            Console.WriteLine("SDO response timeout");
-            return false;
-        }
-
-        private uint WaitForSDOReadResponse(uint expectedCOBID, int timeoutMs = 2000)
-        {
-            var startTime = DateTime.Now;
-            while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
-            {
-                if (canFrames.TryDequeue(out string? frame) && !string.IsNullOrEmpty(frame))
+                if (canFrames.TryDequeue(out var frame) && !string.IsNullOrEmpty(frame))
                 {
                     if (TryParseCandumpLine(frame, out uint cobId, out string dataHex))
                     {
@@ -273,24 +222,47 @@ namespace BlazorApp2
                         {
                             try
                             {
-                                byte responseCmd = Convert.ToByte(dataHex[..2], 16);
+                                byte cmd = Convert.ToByte(dataHex[..2], 16);
 
-                                if (responseCmd == 0x80)
-                                {
-                                    Console.WriteLine("SDO Abort nhan duoc");
-                                    return 0;
-                                }
+                                if (cmd == 0x80) { Console.WriteLine("SDO Abort"); return false; }
+                                if (isWrite && cmd == 0x60) return true;
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                Thread.Sleep(10);
+            }
+            Console.WriteLine("SDO response timeout");
+            return false;
+        }
 
-                                // parse based on command (like trước)
-                                return responseCmd switch
+        private uint WaitForSDOReadResponse(uint expectedCOBID, int timeoutMs = 2000)
+        {
+            var start = DateTime.Now;
+            while ((DateTime.Now - start).TotalMilliseconds < timeoutMs)
+            {
+                if (canFrames.TryDequeue(out var frame) && !string.IsNullOrEmpty(frame))
+                {
+                    if (TryParseCandumpLine(frame, out uint cobId, out string dataHex))
+                    {
+                        if (cobId == expectedCOBID && !string.IsNullOrEmpty(dataHex))
+                        {
+                            try
+                            {
+                                byte cmd = Convert.ToByte(dataHex[..2], 16);
+
+                                if (cmd == 0x80) { Console.WriteLine("SDO Abort"); return 0; }
+
+                                return cmd switch
                                 {
                                     0x4F => Convert.ToByte(dataHex.Substring(8, 2), 16), // 1 byte
                                     0x4B => (uint)(Convert.ToByte(dataHex.Substring(8, 2), 16) |
-                                                  Convert.ToByte(dataHex.Substring(10, 2), 16) << 8), // 2 bytes
+                                                   Convert.ToByte(dataHex.Substring(10, 2), 16) << 8),
                                     0x43 => (uint)(Convert.ToByte(dataHex.Substring(8, 2), 16) |
                                                    Convert.ToByte(dataHex.Substring(10, 2), 16) << 8 |
                                                    Convert.ToByte(dataHex.Substring(12, 2), 16) << 16 |
-                                                   Convert.ToByte(dataHex.Substring(14, 2), 16) << 24), // 4 bytes
+                                                   Convert.ToByte(dataHex.Substring(14, 2), 16) << 24),
                                     _ => 0u
                                 };
                             }
@@ -300,7 +272,6 @@ namespace BlazorApp2
                 }
                 Thread.Sleep(10);
             }
-
             Console.WriteLine("SDO read response timeout");
             return 0;
         }
@@ -309,7 +280,7 @@ namespace BlazorApp2
         {
             try
             {
-                var process = new Process
+                var p = new Process
                 {
                     StartInfo = new ProcessStartInfo
                     {
@@ -322,23 +293,20 @@ namespace BlazorApp2
                     }
                 };
 
-                process.Start();
-                string output = process.StandardOutput.ReadToEnd();
-                string error = process.StandardError.ReadToEnd();
-                process.WaitForExit();
+                p.Start();
+                string output = p.StandardOutput.ReadToEnd();
+                string error = p.StandardError.ReadToEnd();
+                p.WaitForExit();
 
-                if (!string.IsNullOrEmpty(error) && !error.Contains("RTNETLINK answers: File exists"))
-                {
+                if (!string.IsNullOrEmpty(error) && !error.Contains("File exists"))
                     return error;
-                }
 
                 return output;
             }
             catch (Exception ex)
             {
-                return $"Loi: {ex.Message}";
+                return $"Lỗi: {ex.Message}";
             }
         }
     }
-
 }

@@ -9,6 +9,7 @@ namespace BlazorApp2.Services
         private UbuntuCANInterface? _can;
         private byte _nodeId;
         public event Action<string>? OnCanFrameReceived;
+        public event Action<CanLogEntry>? OnCanLog;
 
         public MotorManager()
         {
@@ -18,17 +19,22 @@ namespace BlazorApp2.Services
             // nối sự kiện
             _can.CANFrameReceived += (s, frame) =>
             {
-                OnCanFrameReceived?.Invoke(frame);
+                LogReceive(frame); // RX
             };
+
+            _can.CANFrameTransmitted += (s, frame) =>
+            {
+                LogSend(frame); // TX
+            };
+
         }
-        public bool IsConnected => _can.IsConnected;
+        public bool IsConnected { get; private set; }
 
         public bool Connect(string ifName, int baudrate, byte nodeId)
         {
-            return _can.Connect(ifName, baudrate, nodeId);
+            IsConnected = _can.Connect(ifName, baudrate, nodeId);
+            return IsConnected;
         }
-
-        public void Disconnect() => _can.Disconnect();
 
         /// <summary>
         /// Khởi tạo motor sau khi CAN kết nối
@@ -55,10 +61,10 @@ namespace BlazorApp2.Services
             return _motor.StartHoming(method);
         }
 
-        public bool MoveToPosition(int pos, uint vel = 10000)
+        public bool MoveToPosition(int pos, uint vel = 10000, uint acceleration = 1000000, uint deceleration = 1000000)
         {
             if (_motor == null) return false;
-            return _motor.MoveToPosition(pos, vel);
+            return _motor.MoveToPosition(pos, vel, acceleration, deceleration);
         }
 
         public bool SetVelocity(int vel)
@@ -105,5 +111,36 @@ namespace BlazorApp2.Services
             }
             catch { }
         }
+        public void LogSend(string frame)
+        {
+            OnCanLog?.Invoke(new CanLogEntry
+            {
+                Direction = "TX",
+                Frame = frame
+            });
+        }
+
+        public void LogReceive(string frame)
+        {
+            OnCanLog?.Invoke(new CanLogEntry
+            {
+                Direction = "RX",
+                Frame = frame
+            });
+        }
+        public void Disconnect()
+        {
+            try
+            {
+                // Đóng socket CAN
+                _can?.Disconnect();
+                IsConnected = false;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error when disconnecting CAN");
+            }
+        }
+
     }
 }
