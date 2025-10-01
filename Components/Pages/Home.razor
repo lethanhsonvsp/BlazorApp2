@@ -7,7 +7,7 @@
     .grid-container {
         display: grid;
         grid-template-columns: 1fr 1fr; /* 2 cột */
-        grid-template-rows: auto auto; /* 2 hàng */
+        grid-template-rows: auto auto;
         gap: 20px;
         padding: 10px;
     }
@@ -33,11 +33,10 @@
     .tx {
         color: #0ff;
     }
-    /* xanh dương nhạt cho TX */
+
     .rx {
         color: #0f0;
     }
-    /* xanh lá cho RX */
 </style>
 
 <h3>Điều khiển Motor CiA402</h3>
@@ -45,11 +44,10 @@
 <div class="grid-container">
     <!-- 1.1 Trạng thái -->
     <div class="grid-item">
-        <div>
-            <h3>Trạng thái</h3>
-            <p>@(Manager.IsConnected ? "✅ Đã kết nối CAN" : "❌ Chưa kết nối")</p>
-        </div>
-        <h5>Trạng thái hiện tại</h5>
+        <h3>Trạng thái</h3>
+        <p>@(Manager.IsConnected ? "✅ Đã kết nối CAN" : "❌ Chưa kết nối")</p>
+
+        <h5>Giá trị hiện tại</h5>
         <p>Vị trí: @position</p>
         <p>Vận tốc: @velocity</p>
         <p>Mô-men: @torque</p>
@@ -60,31 +58,58 @@
     <div class="grid-item">
         <h5>Điều khiển</h5>
 
+        <!-- Fault & Enable -->
         <div class="mb-3">
-            <h6>Homing</h6>
-            <input @bind="homingMethod" type="number" min="1" max="35" />
-            <button class="btn btn-primary" @onclick="DoHoming">Bắt đầu Homing</button>
+            <button class="btn btn-warning me-2" @onclick="DoResetFault">Reset Fault</button>
+            <button class="btn btn-success" @onclick="DoEnableMotor">Enable Motor</button>
+            <button class="btn btn-success" @onclick="DoResetMotor">Enable Motor</button>
+            <button class="btn btn-success" @onclick="DoResetNode">Enable Motor</button>
+
         </div>
 
+        <!-- Homing -->
         <div class="mb-3">
-            <h6>Position</h6>
-            <input @bind="targetPosition" type="number" />
-            <input @bind="profileVel" type="number" />
-            <input @bind="acceleration" type="number" />
-            <input @bind="deceleration" type="number" />
-            <button class="btn btn-primary" @onclick="DoMove">Move</button>
+            <label>Homing Method</label>
+            <div class="input-group">
+                <input @bind="homingMethod" type="number" min="1" max="35" class="form-control" />
+                <button class="btn btn-primary" @onclick="DoHoming">Bắt đầu Homing</button>
+            </div>
         </div>
 
+        <!-- Position -->
         <div class="mb-3">
-            <h6>Velocity</h6>
-            <input @bind="targetVel" type="number" />
-            <button class="btn btn-primary" @onclick="DoSetVelocity">Set Velocity</button>
+            <label>Move to Position</label>
+            <div class="input-group mb-1">
+                <span class="input-group-text">Pos</span>
+                <input @bind="targetPosition" type="number" class="form-control" />
+                <span class="input-group-text">Vel</span>
+                <input @bind="profileVel" type="number" class="form-control" />
+            </div>
+            <div class="input-group mb-1">
+                <span class="input-group-text">Acc</span>
+                <input @bind="acceleration" type="number" class="form-control" />
+                <span class="input-group-text">Dec</span>
+                <input @bind="deceleration" type="number" class="form-control" />
+                <button class="btn btn-primary" @onclick="DoMove">Move</button>
+            </div>
         </div>
 
+        <!-- Velocity -->
         <div class="mb-3">
-            <h6>Torque</h6>
-            <input @bind="targetTorque" type="number" />
-            <button class="btn btn-primary" @onclick="DoSetTorque">Set Torque</button>
+            <label>Set Velocity</label>
+            <div class="input-group">
+                <input @bind="targetVel" type="number" class="form-control" />
+                <button class="btn btn-primary" @onclick="DoSetVelocity">Apply</button>
+            </div>
+        </div>
+
+        <!-- Torque -->
+        <div class="mb-3">
+            <label>Set Torque</label>
+            <div class="input-group">
+                <input @bind="targetTorque" type="number" class="form-control" />
+                <button class="btn btn-primary" @onclick="DoSetTorque">Apply</button>
+            </div>
         </div>
     </div>
 
@@ -117,7 +142,7 @@
     short torque = 0;
     uint status = 0;
 
-    int homingMethod = 1;
+    int homingMethod = 35;
     int targetPosition = 0;
     uint profileVel = 10000;
     uint acceleration = 1000000;
@@ -145,7 +170,7 @@
                     txLogs.Insert(0, entry);
                     if (txLogs.Count > 200) txLogs.RemoveAt(txLogs.Count - 1);
                 }
-                else
+                else if (entry.Direction == "RX")
                 {
                     rxLogs.Insert(0, entry);
                     if (rxLogs.Count > 200) rxLogs.RemoveAt(rxLogs.Count - 1);
@@ -153,10 +178,6 @@
                 StateHasChanged();
             });
         };
-
-        // Log demo test giao diện
-        Manager.LogSend("cansend can0 201#1122334455667788");
-        Manager.LogReceive("candump can0  201   [8]  11 22 33 44 55 66 77 88");
     }
 
     async Task UpdateStatus()
@@ -172,27 +193,18 @@
         catch { }
     }
 
-    void DoHoming()
-    {
-        Manager.StartHoming((byte)homingMethod);
-        Manager.LogSend($"HomingMethod={homingMethod}");
-    }
+    void DoHoming() => Manager.StartHoming((byte)homingMethod);
 
-    void DoMove()
-    {
-        Manager.MoveToPosition(targetPosition, profileVel, acceleration, deceleration);
-        Manager.LogSend($"Move Pos={targetPosition} Vel={profileVel}");
-    }
+    void DoMove() => Manager.MoveToPosition(targetPosition, profileVel, acceleration, deceleration);
 
-    void DoSetVelocity()
-    {
-        Manager.SetVelocity(targetVel);
-        Manager.LogSend($"Velocity={targetVel}");
-    }
+    void DoSetVelocity() => Manager.SetVelocity(targetVel);
 
-    void DoSetTorque()
-    {
-        Manager.SetTorque(targetTorque);
-        Manager.LogSend($"Torque={targetTorque}");
-    }
+    void DoSetTorque() => Manager.SetTorque(targetTorque);
+
+    void DoResetFault() => Manager.ResetFault();
+    void DoResetNode() => Manager.ResetNode();
+
+    void DoResetMotor() => Manager.ResetMotor();
+
+    void DoEnableMotor() => Manager.ResetFaultAndEnable();
 }

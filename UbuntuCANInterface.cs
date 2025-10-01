@@ -21,6 +21,10 @@ namespace BlazorApp2
 
         public bool IsConnected => isConnected;
 
+        public string GetInterfaceName()
+        {
+            return canInterface;
+        }
         public bool Connect(string interfaceName, int baudrate, byte nodeId)
         {
             try

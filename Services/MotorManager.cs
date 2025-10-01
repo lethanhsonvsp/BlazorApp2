@@ -4,7 +4,7 @@ namespace BlazorApp2.Services
 {
     public class MotorManager
     {
-        private readonly ILogger<MotorManager> _logger;
+        private readonly ILogger<MotorManager>? _logger;
         private CiA402Motor? _motor;
         private UbuntuCANInterface? _can;
         private byte _nodeId;
@@ -26,8 +26,8 @@ namespace BlazorApp2.Services
             {
                 LogSend(frame); // TX
             };
-
         }
+
         public bool IsConnected { get; private set; }
 
         public bool Connect(string ifName, int baudrate, byte nodeId)
@@ -51,31 +51,49 @@ namespace BlazorApp2.Services
             }
             catch (Exception ex)
             {
+                LogMessage($"❌ InitializeFromCan error: {ex.Message}");
+                _logger?.LogError(ex, "InitializeFromCan");
                 return false;
             }
         }
 
         public bool StartHoming(byte method = 1)
         {
-            if (_motor == null) return false;
+            if (_motor == null)
+            {
+                LogMessage("❌ StartHoming: motor null");
+                return false;
+            }
             return _motor.StartHoming(method);
         }
 
         public bool MoveToPosition(int pos, uint vel = 10000, uint acceleration = 1000000, uint deceleration = 1000000)
         {
-            if (_motor == null) return false;
+            if (_motor == null)
+            {
+                LogMessage("❌ MoveToPosition: motor null");
+                return false;
+            }
             return _motor.MoveToPosition(pos, vel, acceleration, deceleration);
         }
 
         public bool SetVelocity(int vel)
         {
-            if (_motor == null) return false;
+            if (_motor == null)
+            {
+                LogMessage("❌ SetVelocity: motor null");
+                return false;
+            }
             return _motor.SetVelocity(vel);
         }
 
         public bool SetTorque(short t)
         {
-            if (_motor == null) return false;
+            if (_motor == null)
+            {
+                LogMessage("❌ SetTorque: motor null");
+                return false;
+            }
             return _motor.SetTorque(t);
         }
 
@@ -109,12 +127,114 @@ namespace BlazorApp2.Services
             {
                 _motor?.Disable();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ DisableMotor error: {ex.Message}");
+                _logger?.LogError(ex, "DisableMotor");
+            }
         }
+
+        // ---------------- New: Reset fault methods ----------------
+
+        /// <summary>
+        /// Gửi lệnh reset fault tới motor (trả về true nếu WriteSDO báo OK)
+        /// </summary>
+        public bool ResetFault()
+        {
+            if (_motor == null)
+            {
+                LogMessage("❌ ResetFault: motor null");
+                return false;
+            }
+
+            try
+            {
+                LogMessage("🔧 Gửi lệnh reset lỗi...");
+                bool ok = _motor.ResetFault();
+                LogMessage(ok ? "✅ Reset lỗi thành công" : "⚠️ Reset lỗi không thành công");
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Exception ResetFault: {ex.Message}");
+                _logger?.LogError(ex, "ResetFault");
+                return false;
+            }
+        }
+
+        public bool ResetNode()
+        {
+            if (_motor == null)
+            {
+                LogMessage("❌ ResetMotor: motor null");
+                return false;
+            }
+            try
+            {
+                LogMessage("🔧 Gửi lệnh reset động cơ...");
+                bool ok = _motor.ResetNode();
+                LogMessage(ok ? "✅ Reset lỗi thành công" : "⚠️ Reset lỗi không thành công");
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Exception ResetFault: {ex.Message}");
+                _logger?.LogError(ex, "ResetFault");
+                return false;
+            }
+        }
+        public void ResetMotor()
+        {
+            if (_motor.ResetNode())
+            {
+                Console.WriteLine("Reset node thanh cong. Dang khoi tao lai...");
+                Thread.Sleep(500);
+                _motor.Initialize();
+            }
+        }
+        /// <summary>
+        /// Reset lỗi rồi cố gắng enable operation (ResetFault -> EnableOperation).
+        /// Useful khi muốn tự phục hồi và bật lại motor.
+        /// </summary>
+        public bool ResetFaultAndEnable(int waitAfterResetMs = 200)
+        {
+            if (_motor == null)
+            {
+                LogMessage("❌ ResetFaultAndEnable: motor null");
+                return false;
+            }
+
+            try
+            {
+                LogMessage("🔁 Reset lỗi và bật lại motor...");
+                if (!ResetFault())
+                {
+                    LogMessage("⚠️ Reset lỗi thất bại, không thể bật motor.");
+                    return false;
+                }
+
+                // đợi một chút để node xử lý
+                Thread.Sleep(waitAfterResetMs);
+
+                bool enabled = _motor.EnableOperation();
+                LogMessage(enabled ? "✅ Motor đã được bật (Operation Enabled)" : "❌ Không bật được motor sau reset");
+                return enabled;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Exception ResetFaultAndEnable: {ex.Message}");
+                _logger?.LogError(ex, "ResetFaultAndEnable");
+                return false;
+            }
+        }
+
+        // ---------------- End new methods ----------------
+
         public void LogSend(string frame)
         {
             OnCanLog?.Invoke(new CanLogEntry
             {
+                Timestamp = DateTime.Now,
                 Direction = "TX",
                 Frame = frame
             });
@@ -124,10 +244,15 @@ namespace BlazorApp2.Services
         {
             OnCanLog?.Invoke(new CanLogEntry
             {
+                Timestamp = DateTime.Now,
                 Direction = "RX",
                 Frame = frame
             });
+
+            // forward legacy frame event if somebody listens to it
+            OnCanFrameReceived?.Invoke(frame);
         }
+
         public void Disconnect()
         {
             try
@@ -139,8 +264,18 @@ namespace BlazorApp2.Services
             catch (Exception ex)
             {
                 _logger?.LogError(ex, "Error when disconnecting CAN");
+                LogMessage($"❌ Disconnect error: {ex.Message}");
             }
         }
 
+        public void LogMessage(string msg)
+        {
+            OnCanLog?.Invoke(new CanLogEntry
+            {
+                Timestamp = DateTime.Now,
+                Direction = "SYS",
+                Msg = msg
+            });
+        }
     }
 }
