@@ -4,7 +4,6 @@ namespace BlazorApp2.Services
 {
     public class MotorManager
     {
-        private readonly ILogger<MotorManager>? _logger;
         private CiA402Motor? _motor;
         private UbuntuCANInterface? _can;
         private byte _nodeId;
@@ -32,7 +31,7 @@ namespace BlazorApp2.Services
 
         public bool Connect()
         {
-            IsConnected = _can.Connect("can0", 500000, 1);
+            IsConnected = _can!.Connect("can0", 500000, 1);
             return IsConnected;
         }
 
@@ -52,7 +51,6 @@ namespace BlazorApp2.Services
             catch (Exception ex)
             {
                 LogMessage($"❌ InitializeFromCan error: {ex.Message}");
-                _logger?.LogError(ex, "InitializeFromCan");
                 return false;
             }
         }
@@ -130,7 +128,6 @@ namespace BlazorApp2.Services
             catch (Exception ex)
             {
                 LogMessage($"❌ DisableMotor error: {ex.Message}");
-                _logger?.LogError(ex, "DisableMotor");
             }
         }
 
@@ -157,7 +154,6 @@ namespace BlazorApp2.Services
             catch (Exception ex)
             {
                 LogMessage($"❌ Exception ResetFault: {ex.Message}");
-                _logger?.LogError(ex, "ResetFault");
                 return false;
             }
         }
@@ -179,7 +175,6 @@ namespace BlazorApp2.Services
             catch (Exception ex)
             {
                 LogMessage($"❌ Exception ResetFault: {ex.Message}");
-                _logger?.LogError(ex, "ResetFault");
                 return false;
             }
         }
@@ -209,7 +204,6 @@ namespace BlazorApp2.Services
             catch (Exception ex)
             {
                 LogMessage($"❌ Exception ResetMotor: {ex.Message}");
-                _logger?.LogError(ex, "ResetMotor");
                 return false;
             }
         }
@@ -244,11 +238,30 @@ namespace BlazorApp2.Services
             catch (Exception ex)
             {
                 LogMessage($"❌ Exception ResetFaultAndEnable: {ex.Message}");
-                _logger?.LogError(ex, "ResetFaultAndEnable");
                 return false;
             }
         }
 
+        public bool StopMotor()
+        {
+            if (_motor == null)
+            {
+                LogMessage("❌ StopMotor: motor null");
+                return false;
+            }
+            try
+            {
+                LogMessage("🛑 Gửi lệnh dừng motor...");
+                bool ok = _motor.Stop();
+                LogMessage(ok ? "✅ Motor đã dừng" : "❌ Không thể dừng motor");
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Exception StopMotor: {ex.Message}");
+                return false;
+            }
+        }
         // ---------------- End new methods ----------------
 
         public void LogSend(string frame)
@@ -280,15 +293,18 @@ namespace BlazorApp2.Services
             {
                 // Đóng socket CAN
                 _can?.Disconnect();
+                _can = null;
+                _motor = null;
                 IsConnected = false;
+                GC.SuppressFinalize(this);
+
+                LogMessage("✅ Disconnected from CAN");
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error when disconnecting CAN");
                 LogMessage($"❌ Disconnect error: {ex.Message}");
             }
         }
-
         public void LogMessage(string msg)
         {
             OnCanLog?.Invoke(new CanLogEntry
@@ -298,5 +314,6 @@ namespace BlazorApp2.Services
                 Msg = msg
             });
         }
+
     }
 }

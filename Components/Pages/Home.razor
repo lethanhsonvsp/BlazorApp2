@@ -69,7 +69,9 @@
 
         <!-- Fault & Enable -->
         <div class="mb-3">
-            <button class="btn btn-primary me-2" @onclick="DoConnect">Kết nối CAN</button>
+            <button class="btn btn-primary me-2" @onclick="DoConnect">Kết nối</button>
+            <button class="btn btn-secondary me-2" @onclick="DoDisconnect">Ngắt kết nối</button>
+            <button class="btn btn-danger me-2" @onclick="DoStopMotor">Dừng Motor</button>
             <button class="btn btn-warning me-2" @onclick="DoResetFault">Reset Fault</button>
             <button class="btn btn-success me-2" @onclick="DoEnableMotor">Enable Motor</button>
             <button class="btn btn-secondary me-2" @onclick="DoResetMotor">Reset Motor</button>
@@ -228,9 +230,12 @@
     {
         try
         {
-            position = Manager.GetPosition();
-            velocity = Manager.GetVelocity();
-            torque = Manager.GetTorque();
+            await Task.Run(() =>
+            {
+                position = Manager.GetPosition();
+                velocity = Manager.GetVelocity();
+                torque = Manager.GetTorque();
+            });
             StateHasChanged();
         }
         catch { }
@@ -243,7 +248,7 @@
             while (await _timer!.WaitForNextTickAsync(token))
             {
                 statusDesc = Manager.GetStatusDescription();
-                InvokeAsync(StateHasChanged);
+                await InvokeAsync(StateHasChanged);
             }
         }
         catch (OperationCanceledException)
@@ -261,4 +266,7 @@
     void DoResetMotor() => Manager.ResetMotor();
     void DoEnableMotor() => Manager.ResetFaultAndEnable();
     void DoConnect() => Manager.Connect();
+    void DoDisconnect() => Manager.Disconnect();
+    void DoStopMotor() => Manager.StopMotor();
+
 }
