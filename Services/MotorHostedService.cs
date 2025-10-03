@@ -8,7 +8,6 @@
     {
         private readonly UbuntuCANInterface _canInterface;
         private readonly MotorManager _manager;
-        private DateTime _lastReceived;
 
         public MotorHostedService(UbuntuCANInterface canInterface, MotorManager manager)
         {
@@ -29,7 +28,6 @@
                             if (_manager.Connect("can0", 500000, 1))
                             {
                                 _manager.InitializeFromCan(_canInterface, 1);
-                                _lastReceived = DateTime.UtcNow;
                                 _manager.LogMessage("✅ Connected to CAN0");
                             }
                         }
@@ -41,15 +39,6 @@
                     else
                     {
                         _manager.LogMessage("⚠️ CAN0 interface is DOWN. Waiting...");
-                    }
-                }
-                else
-                {
-                    var now = DateTime.UtcNow;
-                    if ((now - _lastReceived).TotalSeconds > 2)
-                    {
-                        _manager.LogMessage("⚠️ CAN bus timeout! Disconnecting...");
-                        _manager.Disconnect();
                     }
                 }
 
@@ -83,11 +72,6 @@
                 _manager.LogMessage($"❌ Error checking {ifName}: {ex.Message}");
                 return false;
             }
-        }
-
-        public void NotifyDataReceived()
-        {
-            _lastReceived = DateTime.UtcNow;
         }
 
         public override Task StopAsync(CancellationToken cancellationToken)
