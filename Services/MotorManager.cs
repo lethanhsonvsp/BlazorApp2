@@ -115,11 +115,11 @@ namespace BlazorApp2.Services
             return _motor.GetActualTorque();
         }
 
-        public uint GetStatus()
+        public string GetStatusDescription()
         {
-            if (_motor == null) return 0;
-            return _motor.GetStatusWord();
+            return _motor?.GetStatusDescription() ?? "No data";
         }
+
 
         public void DisableMotor()
         {
@@ -183,13 +183,34 @@ namespace BlazorApp2.Services
                 return false;
             }
         }
-        public void ResetMotor()
+        public bool ResetMotor()
         {
-            if (_motor.ResetNode())
+            if (_motor == null)
             {
-                Console.WriteLine("Reset node thanh cong. Dang khoi tao lai...");
-                Thread.Sleep(500);
-                _motor.Initialize();
+                LogMessage("❌ ResetMotor: motor null");
+                return false;
+            }
+            try
+            {
+                if (_motor.ResetNode())
+                {
+                    LogMessage("🔧 Đang khởi tạo lại motor sau reset...");
+                    Thread.Sleep(500);
+                    bool ok = _motor.Initialize();
+                    LogMessage(ok ? "✅ Motor đã được khởi tạo lại sau reset" : "❌ Không thể khởi tạo lại motor sau reset");
+                    return ok;
+                }
+                else
+                {
+                    LogMessage("❌ ResetNode failed in ResetMotor");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Exception ResetMotor: {ex.Message}");
+                _logger?.LogError(ex, "ResetMotor");
+                return false;
             }
         }
         /// <summary>
