@@ -426,7 +426,18 @@ public class CiA402Motor
     {
         return canInterface.ReadSDO(STATUS_WORD, 0);
     }
-
+    public string GetStatusDescription()
+    {
+        uint sw = GetStatusWord();
+        if ((sw & 0x08) != 0) return "Fault";
+        if ((sw & 0x2000) != 0) return "Homing error";
+        if ((sw & 0x1000) != 0) return "Homing attained";
+        if ((sw & 0x04) != 0) return "Operation enabled";
+        if ((sw & 0x02) != 0) return "Switched on";
+        if ((sw & 0x01) != 0) return "Ready to switch on";
+        if ((sw & 0x40) != 0) return "Switch on disabled";
+        return "Unknown";
+    }
     public bool Stop()
     {
         Console.WriteLine("Dừng motor...");
