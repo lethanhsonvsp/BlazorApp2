@@ -69,14 +69,24 @@
 
         <!-- Fault & Enable -->
         <div class="mb-3">
-            <button class="btn btn-primary me-2" @onclick="DoConnect">Kết nối</button>
-            <button class="btn btn-secondary me-2" @onclick="DoDisconnect">Ngắt kết nối</button>
-            <button class="btn btn-danger me-2" @onclick="DoStopMotor">Dừng Motor</button>
-            <button class="btn btn-warning me-2" @onclick="DoResetFault">Reset Fault</button>
-            <button class="btn btn-success me-2" @onclick="DoEnableMotor">Enable Motor</button>
-            <button class="btn btn-secondary me-2" @onclick="DoResetMotor">Reset Motor</button>
-            <button class="btn btn-danger" @onclick="DoResetNode">Reset Node</button>
+            <div class="btn-group mb-2" role="group">
+                <button class="btn btn-primary" @onclick="DoConnect">Connect CAN</button>
+                <button class="btn btn-secondary" @onclick="DoDisconnect">Disconnect CAN</button>
+            </div>
+            <div class="btn-group mb-2" role="group">
+                <button class="btn btn-warning" @onclick="DoResetFault">Reset Fault</button>
+                <button class="btn btn-secondary" @onclick="DoResetMotor">Reset Motor</button>
+                <button class="btn btn-danger" @onclick="DoResetNode">Reset Node</button>
+            </div>
+            <div class="btn-group mb-2" role="group">
+                <button class="btn btn-success" @onclick="DoEnableMotor">Enable Motor</button>
+                <button class="btn btn-danger" @onclick="DoStopMotor">StopMotor</button>
+                <button class="btn btn-info" @onclick="DoQuitMotor">QuitMotor</button>
+                <button class="btn btn-warning" @onclick="DoDisableMotor">Disable Motor</button>
+            </div>
+
         </div>
+
 
         <!-- Homing -->
         <div class="mb-3">
@@ -187,7 +197,7 @@
     protected override void OnInitialized()
     {
         // update position, velocity, torque
-        timer = new System.Timers.Timer(500);
+        timer = new System.Timers.Timer(1000);
         timer.Elapsed += async (s, e) => await InvokeAsync(UpdateStatus);
         timer.Start();
 
@@ -268,5 +278,7 @@
     void DoConnect() => Manager.Connect();
     void DoDisconnect() => Manager.Disconnect();
     void DoStopMotor() => Manager.StopMotor();
+    void DoDisableMotor() => Manager.DisableMotor();
+    void DoQuitMotor() => Manager.QuickStop();
 
 }

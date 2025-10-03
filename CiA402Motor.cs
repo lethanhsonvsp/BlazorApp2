@@ -1,11 +1,10 @@
 ﻿using BlazorApp2;
 using System.Diagnostics;
+namespace BlazorApp2;
 
-public class CiA402Motor
+public class CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
 {
-    private UbuntuCANInterface canInterface;
-    private byte nodeId;
-    private CiA402State currentState;
+    private CiA402State currentState = CiA402State.NotReadyToSwitchOn;
     private OperationMode currentMode;
 
     // CiA 402 Object Dictionary Indices
@@ -23,13 +22,6 @@ public class CiA402Motor
     private const ushort PROFILE_VELOCITY = 0x6081;
     private const ushort PROFILE_ACCELERATION = 0x6083;
     private const ushort PROFILE_DECELERATION = 0x6084;
-
-    public CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
-    {
-        this.canInterface = canInterface;
-        this.nodeId = nodeId;
-        this.currentState = CiA402State.NotReadyToSwitchOn;
-    }
 
     public bool Initialize()
     {
