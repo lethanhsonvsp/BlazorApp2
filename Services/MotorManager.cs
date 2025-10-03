@@ -30,9 +30,9 @@ namespace BlazorApp2.Services
 
         public bool IsConnected { get; private set; }
 
-        public bool Connect(string ifName, int baudrate, byte nodeId)
+        public bool Connect()
         {
-            IsConnected = _can.Connect(ifName, baudrate, nodeId);
+            IsConnected = _can.Connect("can0", 500000, 1);
             return IsConnected;
         }
 

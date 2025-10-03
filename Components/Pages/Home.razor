@@ -69,6 +69,7 @@
 
         <!-- Fault & Enable -->
         <div class="mb-3">
+            <button class="btn btn-primary me-2" @onclick="DoConnect">Kết nối CAN</button>
             <button class="btn btn-warning me-2" @onclick="DoResetFault">Reset Fault</button>
             <button class="btn btn-success me-2" @onclick="DoEnableMotor">Enable Motor</button>
             <button class="btn btn-secondary me-2" @onclick="DoResetMotor">Reset Motor</button>
@@ -178,6 +179,9 @@
 
     System.Timers.Timer? timer;
 
+    // lưu frame RX cuối cùng để tránh duplicate
+    string? _lastRxFrame = null;
+
     protected override void OnInitialized()
     {
         // update position, velocity, torque
@@ -202,11 +206,16 @@
                 }
                 else if (entry.Direction == "RX")
                 {
-                    rxLogs.Insert(0, entry);
-                    if (rxLogs.Count > 200) rxLogs.RemoveAt(rxLogs.Count - 1);
+                    // chỉ log khi khác frame trước đó
+                    if (_lastRxFrame != entry.Frame)
+                    {
+                        rxLogs.Insert(0, entry);
+                        if (rxLogs.Count > 200) rxLogs.RemoveAt(rxLogs.Count - 1);
+                        _lastRxFrame = entry.Frame;
+                    }
                 }
 
-                // log message
+                // Log message (giữ tất cả)
                 logMessages.Insert(0, entry);
                 if (logMessages.Count > 200) logMessages.RemoveAt(logMessages.Count - 1);
 
@@ -251,4 +260,5 @@
     void DoResetNode() => Manager.ResetNode();
     void DoResetMotor() => Manager.ResetMotor();
     void DoEnableMotor() => Manager.ResetFaultAndEnable();
+    void DoConnect() => Manager.Connect();
 }
