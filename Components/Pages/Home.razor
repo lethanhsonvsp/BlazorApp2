@@ -6,8 +6,8 @@
 <style>
     .grid-container {
         display: grid;
-        grid-template-columns: 1fr 1fr; /* 2 cột */
-        grid-template-rows: auto auto;
+        grid-template-columns: 1fr 1fr 1fr; /* 3 cột */
+        grid-auto-rows: auto;
         gap: 20px;
         padding: 10px;
     }
@@ -18,6 +18,15 @@
         padding: 15px;
         background: #f9f9f9;
         box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+    }
+
+    /* Hàng 1: trạng thái (1 cột), điều khiển (2 cột) */
+    .item-status {
+        grid-column: span 1;
+    }
+
+    .item-control {
+        grid-column: span 2;
     }
 
     .log-box {
@@ -43,7 +52,7 @@
 
 <div class="grid-container">
     <!-- 1.1 Trạng thái -->
-    <div class="grid-item">
+    <div class="grid-item item-status">
         <h3>Trạng thái</h3>
         <p>@(Manager.IsConnected ? "✅ Đã kết nối CAN" : "❌ Chưa kết nối")</p>
 
@@ -51,20 +60,19 @@
         <p>Vị trí: @position</p>
         <p>Vận tốc: @velocity</p>
         <p>Mô-men: @torque</p>
-        <p>Status Word: 0x@status:X4</p>
+        <h3>Status: @statusDesc</h3>
     </div>
 
     <!-- 1.2 Các nút điều khiển -->
-    <div class="grid-item">
+    <div class="grid-item item-control">
         <h5>Điều khiển</h5>
 
         <!-- Fault & Enable -->
         <div class="mb-3">
             <button class="btn btn-warning me-2" @onclick="DoResetFault">Reset Fault</button>
-            <button class="btn btn-success" @onclick="DoEnableMotor">Enable Motor</button>
-            <button class="btn btn-success" @onclick="DoResetMotor">Enable Motor</button>
-            <button class="btn btn-success" @onclick="DoResetNode">Enable Motor</button>
-
+            <button class="btn btn-success me-2" @onclick="DoEnableMotor">Enable Motor</button>
+            <button class="btn btn-secondary me-2" @onclick="DoResetMotor">Reset Motor</button>
+            <button class="btn btn-danger" @onclick="DoResetNode">Reset Node</button>
         </div>
 
         <!-- Homing -->
@@ -134,13 +142,23 @@
             }
         </div>
     </div>
+
+    <!-- 2.3 Log Message -->
+    <div class="grid-item">
+        <h5>Log Message</h5>
+        <div class="log-box">
+            @foreach (var log in logMessages)
+            {
+                <div>@($"[{log.Timestamp:HH:mm:ss}] {log.Msg}")</div>
+            }
+        </div>
+    </div>
 </div>
 
 @code {
     int position = 0;
     int velocity = 0;
     short torque = 0;
-    uint status = 0;
 
     int homingMethod = 35;
     int targetPosition = 0;
@@ -150,17 +168,29 @@
     int targetVel = 0;
     short targetTorque = 0;
 
+    private string statusDesc = "Đang chờ dữ liệu...";
+    private System.Threading.PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
     List<CanLogEntry> txLogs = new();
     List<CanLogEntry> rxLogs = new();
+    List<CanLogEntry> logMessages = new();
 
     System.Timers.Timer? timer;
 
     protected override void OnInitialized()
     {
+        // update position, velocity, torque
         timer = new System.Timers.Timer(500);
         timer.Elapsed += async (s, e) => await InvokeAsync(UpdateStatus);
         timer.Start();
 
+        // update status description
+        _cts = new CancellationTokenSource();
+        _timer = new System.Threading.PeriodicTimer(TimeSpan.FromMilliseconds(500));
+        _ = UpdateLoop(_cts.Token);
+
+        // log handler
         Manager.OnCanLog += (entry) =>
         {
             InvokeAsync(() =>
@@ -175,6 +205,11 @@
                     rxLogs.Insert(0, entry);
                     if (rxLogs.Count > 200) rxLogs.RemoveAt(rxLogs.Count - 1);
                 }
+
+                // log message
+                logMessages.Insert(0, entry);
+                if (logMessages.Count > 200) logMessages.RemoveAt(logMessages.Count - 1);
+
                 StateHasChanged();
             });
         };
@@ -187,24 +222,33 @@
             position = Manager.GetPosition();
             velocity = Manager.GetVelocity();
             torque = Manager.GetTorque();
-            status = Manager.GetStatus();
             StateHasChanged();
         }
         catch { }
     }
 
+    private async Task UpdateLoop(CancellationToken token)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(token))
+            {
+                statusDesc = Manager.GetStatusDescription();
+                InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // ignore
+        }
+    }
+
     void DoHoming() => Manager.StartHoming((byte)homingMethod);
-
     void DoMove() => Manager.MoveToPosition(targetPosition, profileVel, acceleration, deceleration);
-
     void DoSetVelocity() => Manager.SetVelocity(targetVel);
-
     void DoSetTorque() => Manager.SetTorque(targetTorque);
-
     void DoResetFault() => Manager.ResetFault();
     void DoResetNode() => Manager.ResetNode();
-
     void DoResetMotor() => Manager.ResetMotor();
-
     void DoEnableMotor() => Manager.ResetFaultAndEnable();
 }
