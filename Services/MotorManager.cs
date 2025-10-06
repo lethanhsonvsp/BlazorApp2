@@ -110,10 +110,10 @@ public class MotorManager
         return _motor.SetTorque(t);
     }
 
-    public int GetPosition()
+    public double GetPosition()
     {
         if (_motor == null) return 0;
-        return _motor.GetActualPosition();
+        return _motor.GetActualPositionRad();
     }
 
     public double GetVelocity()

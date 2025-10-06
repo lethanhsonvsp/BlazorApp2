@@ -170,7 +170,7 @@
 </div>
 
 @code {
-    int position = 0;
+    double position = 0;
     double velocity = 0;
     short torque = 0;
 
@@ -208,11 +208,11 @@
         _ = UpdateLoop(_cts.Token);
 
         // Lắng nghe frame từ CANInterface
-        CANInterface.CANFrameReceived += (sender, frame) =>
-        {
-            // Gọi ProcessPDOMessage với dữ liệu frame
-            CANInterface.ProcessPDOMessage(frame);
-        };
+        // CANInterface.CANFrameReceived += (sender, frame) =>
+        // {
+        //     // Gọi ProcessPDOMessage với dữ liệu frame
+        //     CANInterface.ProcessPDOMessage(frame);
+        // };
 
         // log handler
         Manager.OnCanLog += (entry) =>
