@@ -104,13 +104,13 @@
                 <span class="input-group-text">Pos</span>
                 <input @bind="targetPosition" type="number" class="form-control" />
                 <span class="input-group-text">Vel</span>
-                <input @bind="profileVel" type="number" class="form-control" />
+                <input @bind="profileVel" type="number" min="1" max="5000" class="form-control" />
             </div>
             <div class="input-group mb-1">
                 <span class="input-group-text">Acc</span>
-                <input @bind="acceleration" type="number" class="form-control" />
+                <input @bind="acceleration" type="number" min="1" max="5000" class="form-control" />
                 <span class="input-group-text">Dec</span>
-                <input @bind="deceleration" type="number" class="form-control" />
+                <input @bind="deceleration" type="number" min="1" max="5000" class="form-control" />
                 <button class="btn btn-primary" @onclick="DoMove">Move</button>
             </div>
         </div>
@@ -119,7 +119,7 @@
         <div class="mb-3">
             <label>Set Velocity</label>
             <div class="input-group">
-                <input @bind="targetVel" type="number" class="form-control" />
+                <input @bind="targetVel" type="number" min="1" max="5000" class="form-control" />
                 <button class="btn btn-primary" @onclick="DoSetVelocity">Apply</button>
             </div>
         </div>
@@ -175,9 +175,9 @@
 
     int homingMethod = 35;
     int targetPosition = 0;
-    uint profileVel = 10000;
-    uint acceleration = 1000000;
-    uint deceleration = 1000000;
+    uint profileVel = 20;
+    uint acceleration = 100;
+    uint deceleration = 100;
     int targetVel = 0;
     short targetTorque = 0;
 
