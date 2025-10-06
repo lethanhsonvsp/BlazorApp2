@@ -115,6 +115,35 @@ public class UbuntuCANInterface
             }
         });
     }
+    private byte[] HexStringToByteArray(string hex)
+    {
+        if (string.IsNullOrEmpty(hex)) return Array.Empty<byte>();
+        int length = hex.Length / 2;
+        byte[] bytes = new byte[length];
+        for (int i = 0; i < length; i++)
+            bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+        return bytes;
+    }
+
+    public void ProcessPDOMessage(string candumpLine)
+    {
+        if (!TryParseCandumpLine(candumpLine, out uint cobId, out string dataHex))
+            return;
+        if (cobId == (0x180 + nodeId))
+        {
+            byte[] data = HexStringToByteArray(dataHex);
+            latestTPDO1 = new TPDO1Data(data);
+            lastTPDO1Update = DateTime.Now;
+            TPDO1Received?.Invoke(this, latestTPDO1);
+        }
+        else if (cobId == (0x280 + nodeId))
+        {
+            byte[] data = HexStringToByteArray(dataHex);
+            latestTPDO2 = new TPDO2Data(data);
+            lastTPDO2Update = DateTime.Now;
+            TPDO2Received?.Invoke(this, latestTPDO2);
+        }
+    }
 
     public void Disconnect()
     {

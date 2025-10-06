@@ -1,5 +1,6 @@
 ﻿@page "/"
 @inject MotorManager Manager
+@inject UbuntuCANInterface CANInterface
 @using BlazorApp2.Services
 @rendermode InteractiveServer
 
@@ -205,6 +206,13 @@
         _cts = new CancellationTokenSource();
         _timer = new System.Threading.PeriodicTimer(TimeSpan.FromMilliseconds(500));
         _ = UpdateLoop(_cts.Token);
+
+        // Lắng nghe frame từ CANInterface
+        CANInterface.CANFrameReceived += (sender, frame) =>
+        {
+            // Gọi ProcessPDOMessage với dữ liệu frame
+            CANInterface.ProcessPDOMessage(frame);
+        };
 
         // log handler
         Manager.OnCanLog += (entry) =>

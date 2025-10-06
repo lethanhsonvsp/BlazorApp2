@@ -25,7 +25,6 @@ public class MotorManager
             LogSend(frame); // TX
         };
     }
-
     public bool IsConnected { get; private set; }
 
     public bool Connect()

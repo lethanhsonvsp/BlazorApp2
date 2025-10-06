@@ -316,7 +316,7 @@ public class CiA402Motor
     /// <summary>
     /// Reset lỗi motor (Fault Reset)
     /// </summary>
-    public new bool ResetFault()
+    public bool ResetFault()
     {
         Console.WriteLine("Reset lỗi motor...");
         return canInterface.WriteSDO(CONTROL_WORD, 0, 0x80, 2);
