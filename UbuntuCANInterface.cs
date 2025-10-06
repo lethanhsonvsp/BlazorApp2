@@ -19,10 +19,21 @@ public class UbuntuCANInterface
     // TX sau khi cansend
     public event EventHandler<string>? CANFrameTransmitted;
 
-    public string GetInterfaceName()
-    {
-        return canInterface;
-    }
+    private TPDO1Data latestTPDO1;
+    private TPDO2Data latestTPDO2;
+    private DateTime lastTPDO1Update = DateTime.MinValue;
+    private DateTime lastTPDO2Update = DateTime.MinValue;
+
+    public event EventHandler<TPDO1Data>? TPDO1Received;
+    public event EventHandler<TPDO2Data>? TPDO2Received;
+
+    public string GetInterfaceName() => canInterface;
+    public TPDO1Data GetLatestTPDO1() => latestTPDO1;
+    public TPDO2Data GetLatestTPDO2() => latestTPDO2;
+    public DateTime GetLastTPDO1Time() => lastTPDO1Update;
+    public DateTime GetLastTPDO2Time() => lastTPDO2Update;
+
+
     public bool Connect(string interfaceName, int baudrate, byte nodeId)
     {
         try
@@ -54,6 +65,7 @@ public class UbuntuCANInterface
             }
 
             Console.WriteLine($"Trạng thái interface: {status}");
+
             return false;
         }
         catch (Exception ex)
@@ -310,4 +322,66 @@ public class UbuntuCANInterface
             return $"Lỗi: {ex.Message}";
         }
     }
+
+    public bool SendRPDO1(ushort controlWord, int targetPosition)
+    {
+        if (!isConnected) return false;
+        try
+        {
+            uint cobId = (uint)(0x200 + nodeId);
+            byte[] data = new byte[6];
+            data[0] = (byte)(controlWord & 0xFF);
+            data[1] = (byte)((controlWord >> 8) & 0xFF);
+            byte[] posBytes = BitConverter.GetBytes(targetPosition);
+            Array.Copy(posBytes, 0, data, 2, 4);
+            string frameData = BitConverter.ToString(data).Replace("-", "");
+            ExecuteCommand($"cansend {canInterface} {cobId:X3}#{frameData}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Lỗi SendRPDO1: {ex.Message}");
+            return false;
+        }
+    }
+
+    public bool SendRPDO2(int targetVelocity, sbyte modesOfOperation)
+    {
+        if (!isConnected) return false;
+        try
+        {
+            uint cobId = (uint)(0x300 + nodeId);
+            byte[] data = new byte[5];
+            byte[] velBytes = BitConverter.GetBytes(targetVelocity);
+            Array.Copy(velBytes, 0, data, 0, 4);
+            data[4] = (byte)modesOfOperation;
+            string frameData = BitConverter.ToString(data).Replace("-", "");
+            ExecuteCommand($"cansend {canInterface} {cobId:X3}#{frameData}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Lỗi SendRPDO2: {ex.Message}");
+            return false;
+        }
+    }
+
+    public bool SendRPDO3(short targetTorque)
+    {
+        if (!isConnected) return false;
+        try
+        {
+            uint cobId = (uint)(0x400 + nodeId);
+            byte[] data = BitConverter.GetBytes(targetTorque);
+            string frameData = BitConverter.ToString(data).Replace("-", "");
+            ExecuteCommand($"cansend {canInterface} {cobId:X3}#{frameData}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Lỗi SendRPDO3: {ex.Message}");
+            return false;
+        }
+    }
+
 }

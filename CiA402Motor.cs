@@ -2,35 +2,158 @@
 using System.Diagnostics;
 namespace BlazorApp2;
 
-public class CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
+public class CiA402Motor
 {
-    private CiA402State currentState = CiA402State.NotReadyToSwitchOn;
+    private UbuntuCANInterface canInterface;
+    private byte nodeId;
+    private CiA402State currentState;
     private OperationMode currentMode;
+    private bool usePDO = false;
 
-    // CiA 402 Object Dictionary Indices
     private const ushort CONTROL_WORD = 0x6040;
     private const ushort STATUS_WORD = 0x6041;
-    private const ushort MODES_OF_OPERATION = 0x6060;
-    private const ushort MODES_OF_OPERATION_DISPLAY = 0x6061;
+    //private const ushort MODES_OF_OPERATION = 0x6060;
     private const ushort TARGET_POSITION = 0x607A;
     private const ushort POSITION_ACTUAL = 0x6064;
     private const ushort TARGET_VELOCITY = 0x60FF;
     private const ushort VELOCITY_ACTUAL = 0x606C;
     private const ushort TARGET_TORQUE = 0x6071;
     private const ushort TORQUE_ACTUAL = 0x6077;
-    private const ushort HOMING_METHOD = 0x6098;
     private const ushort PROFILE_VELOCITY = 0x6081;
     private const ushort PROFILE_ACCELERATION = 0x6083;
     private const ushort PROFILE_DECELERATION = 0x6084;
 
+    private const double ENCODER_RES = 1048576.0;
+    private const double GEAR_RATIO = 10.0;
+    private const double COUNTS_PER_REV_OUTPUT = ENCODER_RES * GEAR_RATIO;
+
+
+    public CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
+    {
+        this.canInterface = canInterface;
+        this.nodeId = nodeId;
+        this.currentState = CiA402State.NotReadyToSwitchOn;
+    }
+
+    public double GetActualPositionRad()
+    {
+        int counts = GetActualPosition(); // đọc counts gốc
+        return (counts / COUNTS_PER_REV_OUTPUT) * (2.0 * Math.PI);
+    }
+    public bool MoveToPositionRad(double targetRad, uint profileVelocityRpm = 20,uint accelerationRpmPerSec =100, uint decelerationRpmPerSec = 100)
+    {
+        // targetRad là góc trục ra
+        int counts = (int)((targetRad / (2.0 * Math.PI)) * ENCODER_RES * GEAR_RATIO);
+
+        // profileVelocityRpm là RPM động cơ → counts/s
+        int targetVelCounts = (int)((profileVelocityRpm * ENCODER_RES) / 60.0);
+
+        // accelerationRpmPerSec là RPM/s động cơ → counts/s²
+        uint accelCounts = (uint)((accelerationRpmPerSec * ENCODER_RES) / 60.0);
+        uint decelCounts = (uint)((decelerationRpmPerSec * ENCODER_RES) / 60.0);
+
+        return MoveToPosition(counts, (uint)targetVelCounts, accelCounts, decelCounts);
+    }
+    // public double GetActualVelocityRpm()
+    // {
+    //     int countsPerSec = GetActualVelocity(); 
+    //     return (countsPerSec * 60.0) / (ENCODER_RES * GEAR_RATIO);
+    // }
+
+    // public bool SetVelocityRpm(double rpm)
+    // {
+    //     int countsPerSec = (int)((rpm * ENCODER_RES * GEAR_RATIO) / 60.0);
+    //     return SetVelocity(countsPerSec);
+    // }
+
+    public bool SetVelocityRpm(double rpm)
+    {
+        // rpm là RPM của động cơ
+        // Encoder ở trục động cơ nên KHÔNG nhân GEAR_RATIO
+        int countsPerSec = (int)((rpm * ENCODER_RES) / 60.0);
+        return SetVelocity(countsPerSec);
+    }
+
+    public double GetActualVelocityRpm()
+    {
+        int countsPerSec = GetActualVelocity();
+        // Chuyển counts/s sang RPM động cơ
+        return (countsPerSec * 60.0) / ENCODER_RES;
+    }
+    public bool ConfigurePDO()
+    {
+        Console.WriteLine("\n=== Cấu hình PDO Mapping ===");
+
+        // ----- RPDO1: ControlWord (0x6040,16bit) + TargetPosition (0x607A,32bit)
+        canInterface.WriteSDO(0x1400, 1, (uint)(0x80000200 + nodeId), 4); // disable
+        canInterface.WriteSDO(0x1600, 0, 0, 1); // clear
+        canInterface.WriteSDO(0x1600, 1, 0x60400010, 4); // ControlWord
+        canInterface.WriteSDO(0x1600, 2, 0x607A0020, 4); // TargetPosition
+        canInterface.WriteSDO(0x1600, 0, 2, 1);
+        canInterface.WriteSDO(0x1400, 1, (uint)(0x00000200 + nodeId), 4); // enable
+
+        // ----- RPDO2: TargetVelocity (0x60FF,32bit) + ModeOfOperation (0x6060,8bit)
+        canInterface.WriteSDO(0x1401, 1, (uint)(0x80000300 + nodeId), 4);
+        canInterface.WriteSDO(0x1601, 0, 0, 1);
+        canInterface.WriteSDO(0x1601, 1, 0x60FF0020, 4); // TargetVelocity
+        canInterface.WriteSDO(0x1601, 2, 0x60600008, 4); // ModeOfOperation
+        canInterface.WriteSDO(0x1601, 0, 2, 1);
+        canInterface.WriteSDO(0x1401, 1, (uint)(0x00000300 + nodeId), 4);
+
+        // ----- RPDO3: TargetTorque (0x6071,16bit)
+        canInterface.WriteSDO(0x1402, 1, (uint)(0x80000400 + nodeId), 4);
+        canInterface.WriteSDO(0x1602, 0, 0, 1);
+        canInterface.WriteSDO(0x1602, 1, 0x60710010, 4); // TargetTorque
+        canInterface.WriteSDO(0x1602, 0, 1, 1);
+        canInterface.WriteSDO(0x1402, 1, (uint)(0x00000400 + nodeId), 4);
+
+        // ----- TPDO1: StatusWord + PositionActual
+        canInterface.WriteSDO(0x1800, 1, (uint)(0x80000180 + nodeId), 4);
+        canInterface.WriteSDO(0x1A00, 0, 0, 1);
+        canInterface.WriteSDO(0x1A00, 1, 0x60410010, 4);
+        canInterface.WriteSDO(0x1A00, 2, 0x60640020, 4);
+        canInterface.WriteSDO(0x1A00, 0, 2, 1);
+        canInterface.WriteSDO(0x1800, 1, (uint)(0x00000180 + nodeId), 4);
+
+        // ----- TPDO2: VelocityActual + ModesOfOperationDisplay
+        canInterface.WriteSDO(0x1801, 1, (uint)(0x80000280 + nodeId), 4);
+        canInterface.WriteSDO(0x1A01, 0, 0, 1);
+        canInterface.WriteSDO(0x1A01, 1, 0x606C0020, 4);
+        canInterface.WriteSDO(0x1A01, 2, 0x60610008, 4);
+        canInterface.WriteSDO(0x1A01, 0, 2, 1);
+        canInterface.WriteSDO(0x1801, 1, (uint)(0x00000280 + nodeId), 4);
+
+        Console.WriteLine("PDO được cấu hình thành công!");
+        Thread.Sleep(1000);
+        usePDO = true;
+        return true;
+    }
+
+
+    public void EnablePDOMode(bool enable)
+    {
+        usePDO = enable;
+        Console.WriteLine($"PDO Mode: {(enable ? "Enabled" : "Disabled")}");
+    }
+
+    // public bool Initialize()
+    // {
+    //     Console.WriteLine("Khởi tạo motor...");
+    //     UpdateState();
+    //     if (currentState == CiA402State.Fault)
+    //     {
+    //         Console.WriteLine("Phát hiện lỗi, đang reset...");
+    //         ResetFault();
+    //         Thread.Sleep(500);
+    //         UpdateState();
+    //     }
+    //     return EnableOperation();
+    // }
+
     public bool Initialize()
     {
         Console.WriteLine("Khởi tạo motor...");
-
-        // Đọc trạng thái hiện tại
         UpdateState();
-
-        // Reset lỗi nếu có
         if (currentState == CiA402State.Fault)
         {
             Console.WriteLine("Phát hiện lỗi, đang reset...");
@@ -39,20 +162,88 @@ public class CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
             UpdateState();
         }
 
-        // Chuyển về trạng thái Operation Enabled
-        return EnableOperation();
+        if (!EnableOperation())
+            return false;
+
+        Console.WriteLine("\n=== Cấu hình mặc định cho Profile Position ===");
+
+        // 1. Đặt các tham số Profile Position mặc định (dùng RPM động cơ)
+        double defaultVelRpm = 20;      // 100 RPM động cơ
+        double defaultAccelRpm = 100;    // 500 RPM/s gia tốc
+        double defaultDecelRpm = 100;    // 500 RPM/s giảm tốc
+
+        uint defaultVelocity = (uint)((defaultVelRpm * ENCODER_RES) / 60.0);
+        uint defaultAccel = (uint)((defaultAccelRpm * ENCODER_RES) / 60.0);
+        uint defaultDecel = (uint)((defaultDecelRpm * ENCODER_RES) / 60.0);
+
+        Console.WriteLine($"Profile Velocity: {defaultVelRpm} RPM → {defaultVelocity} counts/s");
+        canInterface.WriteSDO(PROFILE_VELOCITY, 0, defaultVelocity, 4);
+        Thread.Sleep(50);
+
+        Console.WriteLine($"Profile Acceleration: {defaultAccelRpm} RPM/s → {defaultAccel} counts/s²");
+        canInterface.WriteSDO(PROFILE_ACCELERATION, 0, defaultAccel, 4);
+        Thread.Sleep(50);
+
+        Console.WriteLine($"Profile Deceleration: {defaultDecelRpm} RPM/s → {defaultDecel} counts/s²");
+        canInterface.WriteSDO(PROFILE_DECELERATION, 0, defaultDecel, 4);
+        Thread.Sleep(50);
+
+        // 2. Đảm bảo Position mode là Absolute (không phải Relative)
+        uint posMode = canInterface.ReadSDO(0x607D, 0);
+        Console.WriteLine($"Position Mode Config: 0x{posMode:X} (bit6=0:Absolute, bit6=1:Relative)");
+
+        if ((posMode & 0x40) != 0)
+        {
+            Console.WriteLine("→ Chuyển sang Absolute Position Mode");
+            canInterface.WriteSDO(0x607D, 0, posMode & ~0x40u, 2);
+            Thread.Sleep(50);
+        }
+        else
+        {
+            Console.WriteLine("→ Đã ở Absolute Position Mode");
+        }
+
+        // 3. Tăng Max Velocity lên 3000 RPM động cơ
+        uint currentMaxVel = canInterface.ReadSDO(0x607F, 0);
+        double currentMaxRpm = (currentMaxVel * 60.0) / ENCODER_RES;
+        Console.WriteLine($"Max Profile Velocity hiện tại: {currentMaxRpm:F2} RPM động cơ");
+
+        if (currentMaxRpm < 1000) // Nếu nhỏ hơn 1000 RPM
+        {
+            double newMaxRpm = 3000;
+            uint newMaxVel = (uint)((newMaxRpm * ENCODER_RES) / 60.0);
+            Console.WriteLine($"→ Tăng Max Velocity lên: {newMaxRpm} RPM → {newMaxVel} counts/s");
+            canInterface.WriteSDO(0x607F, 0, newMaxVel, 4);
+            Thread.Sleep(50);
+        }
+
+        // 4. Kích hoạt Profile Position mode
+        Console.WriteLine("Kích hoạt Profile Position mode...");
+        canInterface.WriteSDO(0x6060, 0, (byte)OperationMode.ProfilePosition, 1);
+        Thread.Sleep(100);
+
+        // Đọc lại để xác nhận
+        uint modeDisplay = canInterface.ReadSDO(0x6061, 0);
+        Console.WriteLine($"Mode hiển thị: {modeDisplay} (1=Profile Position OK)");
+
+        // 5. Gửi ControlWord để sẵn sàng
+        canInterface.WriteSDO(CONTROL_WORD, 0, 0x0F, 2);
+        Thread.Sleep(100);
+
+        Console.WriteLine("✓ Khởi tạo hoàn tất! Motor sẵn sàng cho Position và Velocity mode.\n");
+
+        return true;
     }
 
     private void UpdateState()
     {
-        uint statusWord = canInterface.ReadSDO(STATUS_WORD, 0);
+        uint statusWord = usePDO ? canInterface.GetLatestTPDO1().StatusWord : canInterface.ReadSDO(STATUS_WORD, 0);
         currentState = DecodeState(statusWord);
-        Console.WriteLine($"Trạng thái hiện tại: {currentState} (Status Word: 0x{statusWord:X4})");
+        Console.WriteLine($"Trạng thái: {currentState} (0x{statusWord:X4})");
     }
 
     private CiA402State DecodeState(uint statusWord)
     {
-        // Decode state theo CiA 402 specification
         return (statusWord & 0x4F) switch
         {
             0x00 => CiA402State.NotReadyToSwitchOn,
@@ -70,354 +261,332 @@ public class CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
         };
     }
 
-    public bool ResetFault()
+    /// <summary>
+    /// Thực hiện Homing mode với method (1-35)
+    /// </summary>
+    public bool HomingMode(int method)
     {
-        Console.WriteLine("Đang reset lỗi...");
+        if (method < 1 || method > 35)
+        {
+            Console.WriteLine("Homing method phải nằm trong khoảng 1-35");
+            return false;
+        }
+
+        Console.WriteLine($"=== Bắt đầu Homing (method {method}) ===");
+
+        // Đặt mode về Homing
+        if (!SetOperationMode(OperationMode.Homing)) return false;
+
+        // Ghi Homing Method (0x6098)
+        if (!canInterface.WriteSDO(0x6098, 0, (uint)(sbyte)method, 1))
+        {
+            Console.WriteLine("Không ghi được homing method");
+            return false;
+        }
+
+        // Bật lệnh homing (bit 4 của controlword)
+        canInterface.WriteSDO(CONTROL_WORD, 0, 0x001F, 2);
+        Thread.Sleep(50);
+        canInterface.WriteSDO(CONTROL_WORD, 0, 0x003F, 2);
+
+        Console.WriteLine("Đang homing...");
+
+        // Chờ homing complete (statusword bit 12)
+        var start = DateTime.Now;
+        while ((DateTime.Now - start).TotalSeconds < 30)
+        {
+            uint status = GetStatusWord();
+            if ((status & 0x1000) != 0)
+            {
+                Console.WriteLine("Homing hoàn tất!");
+                return true;
+            }
+            if ((status & 0x2000) != 0)
+            {
+                Console.WriteLine("Homing lỗi!");
+                return false;
+            }
+            Thread.Sleep(200);
+        }
+
+        Console.WriteLine("Timeout homing!");
+        return false;
+    }
+
+    /// <summary>
+    /// Reset lỗi motor (Fault Reset)
+    /// </summary>
+    public new bool ResetFault()
+    {
+        Console.WriteLine("Reset lỗi motor...");
         return canInterface.WriteSDO(CONTROL_WORD, 0, 0x80, 2);
     }
-    public bool ResetNode()
-    {
-        Console.WriteLine("Đang reset node (NMT Reset Node)...");
-        try
-        {
-            // NMT Reset Node command: COB-ID 0x000, byte 1 = 0x81, byte 2 = Node ID
-            string nmtCommand = $"000#{0x81:X2}{nodeId:X2}";
-            string result = ExecuteNMTCommand(nmtCommand);
 
-            if (!result.Contains("error") && !result.Contains("Error"))
-            {
-                Console.WriteLine("Lệnh reset node đã được gửi. Chờ 2 giây để node khởi động lại...");
-                Thread.Sleep(2000);
-                return true;
-            }
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Lỗi reset node: {ex.Message}");
-            return false;
-        }
+    /// <summary>
+    /// Reset toàn bộ motor (fault reset + disable + enable lại)
+    /// </summary>
+    public bool ResetMotor()
+    {
+        Console.WriteLine("=== Reset Motor ===");
+        ResetFault();
+        Thread.Sleep(500);
+        Disable();
+        Thread.Sleep(200);
+        return EnableOperation();
     }
 
-    public bool ResetCommunication()
+    /// <summary>
+    /// Stop motor: byVelocity = true thì stop theo velocity mode, false thì stop theo position mode
+    /// </summary>
+
+    public bool StopMotor()
     {
-        Console.WriteLine("Đang reset communication (NMT Reset Communication)...");
-        try
-        {
-            // NMT Reset Communication command: COB-ID 0x000, byte 1 = 0x82, byte 2 = Node ID
-            string nmtCommand = $"000#{0x82:X2}{nodeId:X2}";
-            string result = ExecuteNMTCommand(nmtCommand);
+        SetVelocity(0);
+        return canInterface.WriteSDO(CONTROL_WORD, 0, 0x010F, 2);
 
-            if (!result.Contains("error") && !result.Contains("Error"))
-            {
-                Console.WriteLine("Lệnh reset communication đã được gửi. Chờ 1 giây...");
-                Thread.Sleep(1000);
-                return true;
-            }
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Lỗi reset communication: {ex.Message}");
-            return false;
-        }
-    }
-
-    private string ExecuteNMTCommand(string nmtFrame)
-    {
-        try
-        {
-            var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    Arguments = $"-c \"cansend {canInterface.GetInterfaceName()} {nmtFrame}\"",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            string output = process.StandardOutput.ReadToEnd();
-            string error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-
-            return string.IsNullOrEmpty(error) ? output : error;
-        }
-        catch (Exception ex)
-        {
-            return $"Lỗi: {ex.Message}";
-        }
     }
     public bool EnableOperation()
     {
         Console.WriteLine("Bật hoạt động motor...");
-        int maxAttempts = 10;
-        int attempt = 0;
-
-        while (attempt < maxAttempts)
+        for (int i = 0; i < 10; i++)
         {
             UpdateState();
-
             switch (currentState)
             {
-                case CiA402State.NotReadyToSwitchOn:
-                    Console.WriteLine("Chờ ready to switch on...");
-                    Thread.Sleep(200);
-                    break;
-
                 case CiA402State.SwitchOnDisabled:
-                    Console.WriteLine("Gửi lệnh shutdown...");
                     canInterface.WriteSDO(CONTROL_WORD, 0, 0x06, 2);
                     Thread.Sleep(200);
                     break;
-
                 case CiA402State.ReadyToSwitchOn:
-                    Console.WriteLine("Gửi lệnh switch on...");
                     canInterface.WriteSDO(CONTROL_WORD, 0, 0x07, 2);
                     Thread.Sleep(200);
                     break;
-
                 case CiA402State.SwitchedOn:
-                    Console.WriteLine("Gửi lệnh enable operation...");
                     canInterface.WriteSDO(CONTROL_WORD, 0, 0x0F, 2);
                     Thread.Sleep(200);
                     break;
-
                 case CiA402State.OperationEnabled:
-                    Console.WriteLine("Motor đã sẵn sàng hoạt động!");
+                    Console.WriteLine("Motor sẵn sàng!");
                     return true;
-
                 case CiA402State.Fault:
-                    Console.WriteLine("Trạng thái lỗi, đang reset...");
                     ResetFault();
                     Thread.Sleep(500);
                     break;
-
                 default:
-                    Console.WriteLine($"Trạng thái không mong đợi: {currentState}");
+                    Thread.Sleep(200);
                     break;
             }
-
-            attempt++;
         }
-
-        Console.WriteLine("Không thể bật operation sau số lần thử tối đa");
         return false;
     }
 
     public bool SetOperationMode(OperationMode mode)
     {
-        Console.WriteLine($"Đặt chế độ hoạt động: {mode}");
+        Console.WriteLine($"Đặt chế độ: {mode}");
         currentMode = mode;
-        bool result = canInterface.WriteSDO(MODES_OF_OPERATION, 0, (uint)(byte)(sbyte)mode, 1);
-
-        if (result)
-        {
-            Thread.Sleep(100);
-            uint displayMode = canInterface.ReadSDO(MODES_OF_OPERATION_DISPLAY, 0);
-            Console.WriteLine($"Chế độ hiển thị: {(sbyte)(byte)displayMode}");
-        }
-
-        return result;
-    }
-
-    public bool StartHoming(byte homingMethod = 1)
-    {
-        Console.WriteLine($"Bắt đầu homing với phương pháp: {homingMethod}");
-
-        if (!SetOperationMode(OperationMode.Homing))
-            return false;
-
-        if (!canInterface.WriteSDO(HOMING_METHOD, 0, homingMethod, 1))
-            return false;
-
-        return canInterface.WriteSDO(CONTROL_WORD, 0, 0x1F, 2);
-    }
-
-    public bool WaitForHomingComplete(int timeoutMs = 30000)
-    {
-        Console.WriteLine("Chờ homing hoàn thành...");
-
-        var startTime = DateTime.Now;
-        while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
-        {
-            uint statusWord = canInterface.ReadSDO(STATUS_WORD, 0);
-
-            if ((statusWord & 0x1000) != 0)
-            {
-                Console.WriteLine("Homing hoàn thành thành công!");
-                return true;
-            }
-
-            if ((statusWord & 0x2000) != 0)
-            {
-                Console.WriteLine("Lỗi homing!");
-                return false;
-            }
-
-            if ((statusWord & 0x08) != 0)
-            {
-                Console.WriteLine("Lỗi trong quá trình homing!");
-                return false;
-            }
-
-            Console.WriteLine($"Homing đang tiến hành... (Status: 0x{statusWord:X4})");
-            Thread.Sleep(1000);
-        }
-
-        Console.WriteLine("Homing timeout!");
-        return false;
+        return canInterface.WriteSDO(0x6060, 0, (uint)(byte)(sbyte)mode, 1);
     }
     public bool MoveToPosition(int targetPosition, uint profileVelocity = 10000,
-                                uint acceleration = 1000000, uint deceleration = 1000000)
+                                uint acceleration = 100000, uint deceleration = 100000)
     {
-        Console.WriteLine($"Di chuyển tới vị trí: {targetPosition}");
+        Console.WriteLine($"Di chuyển tới: {targetPosition} (PDO: {usePDO})");
 
-        if (!SetOperationMode(OperationMode.ProfilePosition))
-            return false;
+        // Set mode về Profile Position
+        if (!SetOperationMode(OperationMode.ProfilePosition)) return false;
 
-        // Cấu hình profile
+        // Dù chạy PDO thì Acc/Dec vẫn phải set qua SDO
         canInterface.WriteSDO(PROFILE_VELOCITY, 0, profileVelocity, 4);
         canInterface.WriteSDO(PROFILE_ACCELERATION, 0, acceleration, 4);
         canInterface.WriteSDO(PROFILE_DECELERATION, 0, deceleration, 4);
 
-        // Xử lý target âm
-        uint positionData = targetPosition < 0
-            ? (uint)((long)targetPosition + 0x100000000L)
-            : (uint)targetPosition;
-
-        // Ghi target position
-        canInterface.WriteSDO(TARGET_POSITION, 0, positionData, 4);
-
-        // ===== Toggle new set-point =====
-        // Clear new set-point
-        canInterface.WriteSDO(CONTROL_WORD, 0, 0x001F, 2);
-        Thread.Sleep(10);
-
-        // Set new set-point
-        canInterface.WriteSDO(CONTROL_WORD, 0, 0x002F, 2);
-        Thread.Sleep(10);
-
-        // Immediate execute (nếu cần)
-        return canInterface.WriteSDO(CONTROL_WORD, 0, 0x003F, 2);
+        if (usePDO)
+        {
+            // RPDO1 chứa ControlWord + TargetPosition
+            canInterface.SendRPDO1(0x001F, targetPosition); // setpoint
+            Thread.Sleep(10);
+            canInterface.SendRPDO1(0x002F, targetPosition); // new setpoint
+            Thread.Sleep(10);
+            return canInterface.SendRPDO1(0x003F, targetPosition); // start move
+        }
+        else
+        {
+            // Nếu dùng SDO
+            uint positionData = targetPosition < 0 ? (uint)((long)targetPosition + 0x100000000L) : (uint)targetPosition;
+            canInterface.WriteSDO(TARGET_POSITION, 0, positionData, 4);
+            canInterface.WriteSDO(CONTROL_WORD, 0, 0x001F, 2);
+            Thread.Sleep(10);
+            canInterface.WriteSDO(CONTROL_WORD, 0, 0x002F, 2);
+            Thread.Sleep(10);
+            return canInterface.WriteSDO(CONTROL_WORD, 0, 0x003F, 2);
+        }
     }
 
-
-    public bool WaitForPositionReached(int targetPosition, int tolerance = 50, int timeoutMs = 30000)
+    public bool WaitForPositionReached(double targetRad, double toleranceRad = 0.01, int timeoutMs = 30000)
     {
-        Console.WriteLine($"Chờ vị trí {targetPosition} được đạt tới (dung sai: {tolerance})");
-
+        Console.WriteLine($"Chờ vị trí {targetRad:F4} rad (tolerance: {toleranceRad} rad)");
         var startTime = DateTime.Now;
+
         while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
         {
-            uint statusWord = canInterface.ReadSDO(STATUS_WORD, 0);
-            int currentPosition = GetActualPosition();
+            double currentRad = GetActualPositionRad();
+            uint statusWord = GetStatusWord();
 
+            // Kiểm tra bit "target reached" (bit 10 của StatusWord)
             if ((statusWord & 0x0400) != 0)
             {
-                Console.WriteLine($"Đạt mục tiêu! Vị trí hiện tại: {currentPosition}");
+                Console.WriteLine($"Đạt mục tiêu! Vị trí: {currentRad:F4} rad");
                 return true;
             }
 
-            if (Math.Abs(currentPosition - targetPosition) <= tolerance)
+            // Kiểm tra dung sai rad
+            if (Math.Abs(currentRad - targetRad) <= toleranceRad)
             {
-                Console.WriteLine($"Vị trí trong dung sai! Hiện tại: {currentPosition}, Mục tiêu: {targetPosition}");
+                Console.WriteLine($"Trong dung sai! Hiện tại: {currentRad:F4} rad");
                 return true;
             }
 
+            // Nếu có lỗi
             if ((statusWord & 0x08) != 0)
             {
                 Console.WriteLine("Lỗi trong quá trình di chuyển!");
                 return false;
             }
 
-            Console.WriteLine($"Đang di chuyển... Hiện tại: {currentPosition}, Mục tiêu: {targetPosition}");
-            Thread.Sleep(500);
+            Console.WriteLine($"Đang di chuyển... {currentRad:F4} rad -> {targetRad:F4} rad");
+            Thread.Sleep(200);
         }
 
-        Console.WriteLine("Timeout di chuyển vị trí!");
+        Console.WriteLine("Timeout khi chờ vị trí!");
         return false;
     }
 
+    // public bool WaitForPositionReached(int targetPosition, int tolerance = 50, int timeoutMs = 30000)
+    // {
+    //     Console.WriteLine($"Chờ vị trí {targetPosition} (tolerance: {tolerance})");
+    //     var startTime = DateTime.Now;
+    //     while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
+    //     {
+    //         double currentPosition = GetActualPositionRad();
+    //         uint statusWord = GetStatusWord();
+    //         if ((statusWord & 0x0400) != 0)
+    //         {
+    //             Console.WriteLine($"Đạt mục tiêu! Vị trí: {currentPosition}");
+    //             return true;
+    //         }
+    //         if (Math.Abs(currentPosition - targetPosition) <= tolerance)
+    //         {
+    //             Console.WriteLine($"Trong dung sai! Hiện tại: {currentPosition}");
+    //             return true;
+    //         }
+    //         if ((statusWord & 0x08) != 0)
+    //         {
+    //             Console.WriteLine("Lỗi trong quá trình di chuyển!");
+    //             return false;
+    //         }
+    //         Console.WriteLine($"Đang di chuyển... {currentPosition} -> {targetPosition}");
+    //         Thread.Sleep(500);
+    //     }
+    //     Console.WriteLine("Timeout!");
+    //     return false;
+    // }
+
     public bool SetVelocity(int targetVelocity)
     {
-        Console.WriteLine($"Đặt vận tốc: {targetVelocity}");
-
-        if (!SetOperationMode(OperationMode.CyclicSynchronousVelocity))
-            return false;
-
-        // Xử lý vận tốc âm đúng cách
-        uint velocityData;
-        if (targetVelocity < 0)
-        {
-            velocityData = (uint)((long)targetVelocity + 0x100000000L);
-        }
+        Console.WriteLine($"Đặt vận tốc: {targetVelocity} (PDO: {usePDO})");
+        if (!SetOperationMode(OperationMode.CyclicSynchronousVelocity)) return false;
+        if (usePDO)
+            return canInterface.SendRPDO2(targetVelocity, (sbyte)OperationMode.CyclicSynchronousVelocity);
         else
         {
-            velocityData = (uint)targetVelocity;
+            uint velocityData = targetVelocity < 0 ? (uint)((long)targetVelocity + 0x100000000L) : (uint)targetVelocity;
+            canInterface.WriteSDO(TARGET_VELOCITY, 0, velocityData, 4);
+            return canInterface.WriteSDO(CONTROL_WORD, 0, 0x0F, 2);
         }
-
-        canInterface.WriteSDO(TARGET_VELOCITY, 0, velocityData, 4);
-        return canInterface.WriteSDO(CONTROL_WORD, 0, 0x0F, 2);
     }
 
     public bool SetTorque(short targetTorque)
     {
-        Console.WriteLine($"Đặt mô-men xoắn: {targetTorque}");
-
-        if (!SetOperationMode(OperationMode.CyclicSynchronousTorque))
-            return false;
-
-        canInterface.WriteSDO(TARGET_TORQUE, 0, (uint)(ushort)targetTorque, 2);
-        return canInterface.WriteSDO(CONTROL_WORD, 0, 0x0F, 2);
+        Console.WriteLine($"Đặt torque: {targetTorque} (PDO: {usePDO})");
+        if (!SetOperationMode(OperationMode.CyclicSynchronousTorque)) return false;
+        if (usePDO)
+            return canInterface.SendRPDO3(targetTorque);
+        else
+        {
+            canInterface.WriteSDO(TARGET_TORQUE, 0, (uint)(ushort)targetTorque, 2);
+            return canInterface.WriteSDO(CONTROL_WORD, 0, 0x0F, 2);
+        }
     }
 
     public int GetActualPosition()
     {
-        uint rawValue = canInterface.ReadSDO(POSITION_ACTUAL, 0);
-        // Chuyển đổi từ unsigned sang signed
-        if (rawValue > 0x7FFFFFFF)
+        if (usePDO)
+            return canInterface.GetLatestTPDO1().ActualPosition;
+        else
         {
-            return (int)(rawValue - 0x100000000L);
+            uint rawValue = canInterface.ReadSDO(POSITION_ACTUAL, 0);
+            return rawValue > 0x7FFFFFFF ? (int)(rawValue - 0x100000000L) : (int)rawValue;
         }
-        return (int)rawValue;
     }
 
     public int GetActualVelocity()
     {
-        uint rawValue = canInterface.ReadSDO(VELOCITY_ACTUAL, 0);
-        // Chuyển đổi từ unsigned sang signed
-        if (rawValue > 0x7FFFFFFF)
+        if (usePDO)
+            return canInterface.GetLatestTPDO2().ActualVelocity;
+        else
         {
-            return (int)(rawValue - 0x100000000L);
+            uint rawValue = canInterface.ReadSDO(VELOCITY_ACTUAL, 0);
+            return rawValue > 0x7FFFFFFF ? (int)(rawValue - 0x100000000L) : (int)rawValue;
         }
-        return (int)rawValue;
     }
-    public uint ReadEncoderResolution()
+    public void ReadMotorLimits()
     {
-        Console.WriteLine("\n=== Đọc Encoder Resolution ===");
+        Console.WriteLine("\n=== Thông Số Giới Hạn Motor ===");
 
-        // Đọc từ object 0x2A0B (theo EDS file của bạn)
-        uint resolution = canInterface.ReadSDO(0x2A0B, 0);
+        // Max Motor Speed (0x6080)
+        uint maxMotorSpeed = canInterface.ReadSDO(0x6080, 0);
+        Console.WriteLine($"Max Motor Speed: {maxMotorSpeed} counts/s");
 
-        Console.WriteLine($"Encoder Resolution: {resolution} counts/rev");
+        // Max Profile Velocity (0x607F)
+        uint maxProfileVel = canInterface.ReadSDO(0x607F, 0);
+        Console.WriteLine($"Max Profile Velocity: {maxProfileVel} counts/s");
 
-        return resolution;
+        // Chuyển sang RPM
+        if (maxMotorSpeed > 0)
+        {
+            double maxRpm = (maxMotorSpeed * 60.0) / ENCODER_RES;
+            Console.WriteLine($"  → Max Motor RPM: {maxRpm:F2} RPM");
+            Console.WriteLine($"  → Max Output RPM: {(maxRpm / GEAR_RATIO):F2} RPM");
+        }
+
+        // Nominal Current (0x6075)
+        uint nominalCurrent = canInterface.ReadSDO(0x6075, 0);
+        Console.WriteLine($"Nominal Current: {nominalCurrent} mA");
+
+        // Max Current (0x6073)
+        uint maxCurrent = canInterface.ReadSDO(0x6073, 0);
+        Console.WriteLine($"Max Current: {maxCurrent} mA");
+
+        // Rated Torque (0x6076)
+        uint ratedTorque = canInterface.ReadSDO(0x6076, 0);
+        Console.WriteLine($"Rated Torque: {ratedTorque} mNm");
     }
+
     public short GetActualTorque()
     {
-        uint rawValue = canInterface.ReadSDO(TORQUE_ACTUAL, 0);
-        return (short)(ushort)rawValue;
+        if (usePDO)
+            return canInterface.GetLatestTPDO1().ActualTorque;
+        else
+        {
+            uint rawValue = canInterface.ReadSDO(TORQUE_ACTUAL, 0);
+            return (short)(ushort)rawValue;
+        }
     }
 
     public uint GetStatusWord()
     {
-        return canInterface.ReadSDO(STATUS_WORD, 0);
+        return usePDO ? canInterface.GetLatestTPDO1().StatusWord : canInterface.ReadSDO(STATUS_WORD, 0);
     }
+
     public string GetStatusDescription()
     {
         uint sw = GetStatusWord();
@@ -430,10 +599,13 @@ public class CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
         if ((sw & 0x40) != 0) return "Switch on disabled";
         return "Unknown";
     }
-    public bool Stop()
+
+    public uint ReadEncoderResolution()
     {
-        Console.WriteLine("Dừng motor...");
-        return canInterface.WriteSDO(CONTROL_WORD, 0, 0x02, 2);
+        Console.WriteLine("\n=== Đọc Encoder Resolution ===");
+        uint resolution = canInterface.ReadSDO(0x2A0B, 0);
+        Console.WriteLine($"Encoder Resolution: {resolution} counts/rev");
+        return resolution;
     }
 
     public bool QuickStop()
@@ -447,4 +619,5 @@ public class CiA402Motor(UbuntuCANInterface canInterface, byte nodeId)
         Console.WriteLine("Tắt motor...");
         return canInterface.WriteSDO(CONTROL_WORD, 0, 0x07, 2);
     }
+
 }

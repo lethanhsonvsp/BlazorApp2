@@ -76,9 +76,9 @@
             <div class="btn-group mb-2" role="group">
                 <button class="btn btn-warning" @onclick="DoResetFault">Reset Fault</button>
                 <button class="btn btn-secondary" @onclick="DoResetMotor">Reset Motor</button>
-                <button class="btn btn-danger" @onclick="DoResetNode">Reset Node</button>
             </div>
             <div class="btn-group mb-2" role="group">
+                <button class="btn btn-success" @onclick="DoReadEncoderResolution">Read Enc</button>
                 <button class="btn btn-success" @onclick="DoEnableMotor">Enable Motor</button>
                 <button class="btn btn-danger" @onclick="DoStopMotor">StopMotor</button>
                 <button class="btn btn-info" @onclick="DoQuitMotor">QuitMotor</button>
@@ -170,7 +170,7 @@
 
 @code {
     int position = 0;
-    int velocity = 0;
+    double velocity = 0;
     short torque = 0;
 
     int homingMethod = 35;
@@ -272,7 +272,6 @@
     void DoSetVelocity() => Manager.SetVelocity(targetVel);
     void DoSetTorque() => Manager.SetTorque(targetTorque);
     void DoResetFault() => Manager.ResetFault();
-    void DoResetNode() => Manager.ResetNode();
     void DoResetMotor() => Manager.ResetMotor();
     void DoEnableMotor() => Manager.ResetFaultAndEnable();
     void DoConnect() => Manager.Connect();
@@ -280,5 +279,6 @@
     void DoStopMotor() => Manager.StopMotor();
     void DoDisableMotor() => Manager.DisableMotor();
     void DoQuitMotor() => Manager.QuickStop();
+    void DoReadEncoderResolution() => Manager.ReadEncoderResolution();
 
 }

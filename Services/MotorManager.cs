@@ -49,7 +49,18 @@ public class MotorManager
                 return false;
             }
             LogMessage("✅ Connected to CAN interface");
+            if (_motor.ConfigurePDO())
+            {
+                _motor.EnablePDOMode(true);
+                LogMessage("✅ PDO mode đã được kích hoạt!");
+            }
+            else
+            {
+                
+                LogMessage("⚠️ Không thể cấu hình PDO cho motor!");
+            }
             IsConnected = true;
+
             return true;
         }
         catch (Exception ex)
@@ -67,27 +78,27 @@ public class MotorManager
             LogMessage("❌ StartHoming: motor null");
             return false;
         }
-        return _motor.StartHoming(method);
+        return _motor.HomingMode(method);
     }
 
-    public bool MoveToPosition(int pos, uint vel = 10000, uint acceleration = 1000000, uint deceleration = 1000000)
+    public bool MoveToPosition(double targetRad, uint profileVelocityRpm = 20, uint accelerationRpmPerSec = 100, uint decelerationRpmPerSec = 100)
     {
         if (_motor == null)
         {
             LogMessage("❌ MoveToPosition: motor null");
             return false;
         }
-        return _motor.MoveToPosition(pos, vel, acceleration, deceleration);
+        return _motor.MoveToPositionRad(targetRad, profileVelocityRpm, accelerationRpmPerSec, decelerationRpmPerSec);
     }
 
-    public bool SetVelocity(int vel)
+    public bool SetVelocity(double rpm)
     {
         if (_motor == null)
         {
             LogMessage("❌ SetVelocity: motor null");
             return false;
         }
-        return _motor.SetVelocity(vel);
+        return _motor.SetVelocityRpm(rpm);
     }
 
     public bool SetTorque(short t)
@@ -106,12 +117,16 @@ public class MotorManager
         return _motor.GetActualPosition();
     }
 
-    public int GetVelocity()
+    public double GetVelocity()
     {
         if (_motor == null) return 0;
-        return _motor.GetActualVelocity();
+        return _motor.GetActualVelocityRpm();
     }
-
+    public uint ReadEncoderResolution()
+    {
+        if (_motor == null) return 0;
+        return _motor.ReadEncoderResolution();
+    }
     public short GetTorque()
     {
         if (_motor == null) return 0;
@@ -185,25 +200,6 @@ public class MotorManager
         }
     }
 
-    public bool ResetNode()
-    {
-        if (_motor == null)
-        {
-            LogMessage("❌ ResetMotor: motor null");
-            return false;
-        }
-        try
-        {
-            bool ok = _motor.ResetNode();
-            LogMessage(ok ? "✅ Reset lỗi thành công" : "⚠️ Reset lỗi không thành công");
-            return ok;
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"❌ Exception ResetFault: {ex.Message}");
-            return false;
-        }
-    }
     public bool ResetMotor()
     {
         if (_motor == null)
@@ -213,7 +209,7 @@ public class MotorManager
         }
         try
         {
-            if (_motor.ResetNode())
+            if (_motor.ResetMotor())
             {
                 LogMessage("🔧 Đang khởi tạo lại motor sau reset...");
                 Thread.Sleep(500);
@@ -273,7 +269,7 @@ public class MotorManager
         }
         try
         {
-            bool ok = _motor.Stop();
+            bool ok = _motor.StopMotor();
             LogMessage(ok ? "✅ Motor đã dừng" : "❌ Không thể dừng motor");
             return ok;
         }
