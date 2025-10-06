@@ -23,7 +23,7 @@ public class CiA402Motor
     private const ushort PROFILE_ACCELERATION = 0x6083;
     private const ushort PROFILE_DECELERATION = 0x6084;
 
-    private const double ENCODER_RES = 1048576.0;
+    private const double ENCODER_RES = 10000;
     private const double GEAR_RATIO = 10.0;
     private const double COUNTS_PER_REV_OUTPUT = ENCODER_RES * GEAR_RATIO;
 

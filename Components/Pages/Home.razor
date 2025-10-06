@@ -58,9 +58,9 @@
         <p>@(Manager.IsConnected ? "✅ Đã kết nối CAN" : "❌ Chưa kết nối")</p>
 
         <h5>Giá trị hiện tại</h5>
-        <p>Vị trí: @position</p>
-        <p>Vận tốc: @velocity</p>
-        <p>Mô-men: @torque</p>
+        <p>Vị trí: @position.ToString("F2")</p>
+        <p>Vận tốc: @velocity.ToString("F2")</p>
+        <p>Mô-men: @torque.ToString("F2")</p>
         <h3>Status: @statusDesc</h3>
     </div>
 
@@ -103,15 +103,15 @@
             <label>Move to Position</label>
             <div class="input-group mb-1">
                 <span class="input-group-text">Pos</span>
-                <input @bind="targetPosition" type="number" class="form-control" />
+                <input @bind="targetPosition" type="number" step="0.01" min="-100000" max="100000" class="form-control" />
                 <span class="input-group-text">Vel</span>
-                <input @bind="profileVel" type="number" min="1" max="5000" class="form-control" />
+                <input @bind="profileVel" type="number" step="0.01" min="-5000" max="5000" class="form-control" />
             </div>
             <div class="input-group mb-1">
                 <span class="input-group-text">Acc</span>
-                <input @bind="acceleration" type="number" min="1" max="5000" class="form-control" />
+                <input @bind="acceleration" type="number" step="0.01" min="-5000" max="5000" class="form-control" />
                 <span class="input-group-text">Dec</span>
-                <input @bind="deceleration" type="number" min="1" max="5000" class="form-control" />
+                <input @bind="deceleration" type="number" step="0.01" min="-5000" max="5000" class="form-control" />
                 <button class="btn btn-primary" @onclick="DoMove">Move</button>
             </div>
         </div>
@@ -172,14 +172,14 @@
 @code {
     double position = 0;
     double velocity = 0;
-    short torque = 0;
+    double torque = 0;
 
     int homingMethod = 35;
-    int targetPosition = 0;
+    double targetPosition = 0;
     uint profileVel = 20;
     uint acceleration = 100;
     uint deceleration = 100;
-    int targetVel = 0;
+    uint targetVel = 0;
     short targetTorque = 0;
 
     private string statusDesc = "Đang chờ dữ liệu...";

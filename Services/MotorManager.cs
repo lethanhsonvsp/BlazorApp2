@@ -42,6 +42,7 @@ public class MotorManager
         try 
         { 
             bool canOk = IsConnected = _can!.Connect("can0", 500000, 1);
+            _motor.Initialize();
             if (!canOk)
             {
                 LogMessage("❌ Cannot connect to CAN interface");
