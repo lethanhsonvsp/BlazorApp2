@@ -112,7 +112,9 @@ public class CiA402Motor
         canInterface.WriteSDO(0x1A00, 0, 0, 1);
         canInterface.WriteSDO(0x1A00, 1, 0x60410010, 4);
         canInterface.WriteSDO(0x1A00, 2, 0x60640020, 4);
-        canInterface.WriteSDO(0x1A00, 0, 2, 1);
+
+        canInterface.WriteSDO(0x1A00, 3, 0x60770010, 4);  // TorqueActual (16-bit) ← THÊM DÒNG NÀY
+        canInterface.WriteSDO(0x1A00, 0, 3, 1);           // 3 objects ← SỬA TỪ 2 THÀNH 3
         canInterface.WriteSDO(0x1800, 1, (uint)(0x00000180 + nodeId), 4);
 
         // ----- TPDO2: VelocityActual + ModesOfOperationDisplay
@@ -126,6 +128,7 @@ public class CiA402Motor
         Console.WriteLine("PDO được cấu hình thành công!");
         Thread.Sleep(1000);
         usePDO = true;
+        Initialize();
         return true;
     }
 

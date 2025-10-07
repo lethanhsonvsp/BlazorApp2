@@ -9,57 +9,47 @@ public class MotorManager
     public event Action<string>? OnCanFrameReceived;
     public event Action<CanLogEntry>? OnCanLog;
 
+    public bool IsConnected { get; private set; }
+
     public MotorManager()
     {
         _can = new UbuntuCANInterface();
         _motor = new CiA402Motor(_can, 0x01);
 
-        // nối sự kiện
-        _can.CANFrameReceived += (s, frame) =>
-        {
-            LogReceive(frame); // RX
-        };
-
-        _can.CANFrameTransmitted += (s, frame) =>
-        {
-            LogSend(frame); // TX
-        };
+        _can.CANFrameReceived += (s, frame) => LogReceive(frame);
+        _can.CANFrameTransmitted += (s, frame) => LogSend(frame);
     }
-    public bool IsConnected { get; private set; }
+
+    #region Kết nối & Ngắt kết nối
 
     public bool Connect()
     {
-        if (_can == null)
+        if (_can == null || _motor == null)
         {
-            LogMessage("❌ Connect: CAN interface null");
+            LogMessage("❌ Connect: CAN interface hoặc motor null");
             return false;
         }
-        if (_motor == null)
+
+        try
         {
-            LogMessage("❌ Connect: motor null");
-            return false;
-        }
-        try 
-        { 
-            bool canOk = IsConnected = _can!.Connect("can0", 500000, 1);
-            _motor.Initialize();
-            if (!canOk)
+            IsConnected = _can.Connect("can0", 500000, 1);
+            if (!IsConnected)
             {
-                LogMessage("❌ Cannot connect to CAN interface");
+                LogMessage("❌ Không thể kết nối CAN interface");
                 return false;
             }
-            LogMessage("✅ Connected to CAN interface");
+
+            LogMessage("✅ Đã kết nối CAN interface");
+
             if (_motor.ConfigurePDO())
             {
                 _motor.EnablePDOMode(true);
-                LogMessage("✅ PDO mode đã được kích hoạt!");
+                LogMessage("✅ Đã kích hoạt chế độ PDO");
             }
             else
             {
-                
-                LogMessage("⚠️ Không thể cấu hình PDO cho motor!");
+                LogMessage("⚠️ Không thể cấu hình PDO cho motor");
             }
-            IsConnected = true;
 
             return true;
         }
@@ -70,85 +60,75 @@ public class MotorManager
         }
     }
 
+    public void Disconnect()
+    {
+        try
+        {
+            _can?.Disconnect();
+            _can = null;
+            _motor = null;
+            IsConnected = false;
+
+            GC.SuppressFinalize(this);
+            LogMessage("✅ Đã ngắt kết nối CAN");
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"❌ Disconnect error: {ex.Message}");
+        }
+    }
+
+    #endregion
+
+    #region Điều khiển chính
 
     public bool StartHoming(byte method = 1)
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ StartHoming: motor null");
-            return false;
-        }
+        if (_motor == null) return LogFail("StartHoming: motor null");
         return _motor.HomingMode(method);
     }
 
-    public bool MoveToPosition(double targetRad, uint profileVelocityRpm = 20, uint accelerationRpmPerSec = 100, uint decelerationRpmPerSec = 100)
+    public bool MoveToPosition(double targetRad, uint vel = 20, uint acc = 100, uint dec = 100)
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ MoveToPosition: motor null");
-            return false;
-        }
-        return _motor.MoveToPositionRad(targetRad, profileVelocityRpm, accelerationRpmPerSec, decelerationRpmPerSec);
+        if (_motor == null) return LogFail("MoveToPosition: motor null");
+        return _motor.MoveToPositionRad(targetRad, vel, acc, dec);
     }
 
     public bool SetVelocity(double rpm)
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ SetVelocity: motor null");
-            return false;
-        }
+        if (_motor == null) return LogFail("SetVelocity: motor null");
         return _motor.SetVelocityRpm(rpm);
     }
 
-    public bool SetTorque(short t)
+    public bool SetTorque(short torque)
     {
-        if (_motor == null)
+        if (_motor == null) return LogFail("SetTorque: motor null");
+        return _motor.SetTorque(torque);
+    }
+
+    public bool StopMotor()
+    {
+        if (_motor == null) return LogFail("StopMotor: motor null");
+        try
         {
-            LogMessage("❌ SetTorque: motor null");
+            bool ok = _motor.StopMotor();
+            LogMessage(ok ? "✅ Motor đã dừng" : "❌ Không thể dừng motor");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"❌ StopMotor error: {ex.Message}");
             return false;
         }
-        return _motor.SetTorque(t);
-    }
-
-    public double GetPosition()
-    {
-        if (_motor == null) return 0;
-        return _motor.GetActualPositionRad();
-    }
-
-    public double GetVelocity()
-    {
-        if (_motor == null) return 0;
-        return _motor.GetActualVelocityRpm();
-    }
-    public uint ReadEncoderResolution()
-    {
-        if (_motor == null) return 0;
-        return _motor.ReadEncoderResolution();
-    }
-    public short GetTorque()
-    {
-        if (_motor == null) return 0;
-        return _motor.GetActualTorque();
-    }
-
-    public string GetStatusDescription()
-    {
-        return _motor?.GetStatusDescription() ?? "No data";
     }
 
     public bool QuickStop()
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ ResetFault: motor null");
-            return false;
-        }
+        if (_motor == null) return LogFail("QuickStop: motor null");
         try
         {
-            bool ok = _motor?.QuickStop() ?? false;
-            LogMessage(ok ? "✅ QuickStop lỗi thành công" : "⚠️ QuickStop lỗi không thành công");
+            bool ok = _motor.QuickStop();
+            LogMessage(ok ? "✅ QuickStop thành công" : "⚠️ QuickStop thất bại");
             return ok;
         }
         catch (Exception ex)
@@ -160,15 +140,11 @@ public class MotorManager
 
     public bool DisableMotor()
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ ResetFault: motor null");
-            return false;
-        }
+        if (_motor == null) return LogFail("DisableMotor: motor null");
         try
         {
-            bool ok = _motor?.Disable() ?? false;
-            LogMessage(ok ? "✅ Disable motor thành công" : "⚠️ Disable motor không thành công");
+            bool ok = _motor.Disable();
+            LogMessage(ok ? "✅ Disable motor thành công" : "⚠️ Disable motor thất bại");
             return ok;
         }
         catch (Exception ex)
@@ -176,109 +152,88 @@ public class MotorManager
             LogMessage($"❌ DisableMotor error: {ex.Message}");
             return false;
         }
-
     }
 
     public bool ResetFault()
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ ResetFault: motor null");
-            return false;
-        }
-
+        if (_motor == null) return LogFail("ResetFault: motor null");
         try
         {
             bool ok = _motor.ResetFault();
-            LogMessage(ok ? "✅ Reset lỗi thành công" : "⚠️ Reset lỗi không thành công");
+            LogMessage(ok ? "✅ Reset lỗi thành công" : "⚠️ Reset lỗi thất bại");
             return ok;
         }
         catch (Exception ex)
         {
-            LogMessage($"❌ Exception ResetFault: {ex.Message}");
+            LogMessage($"❌ ResetFault error: {ex.Message}");
             return false;
         }
     }
 
     public bool ResetMotor()
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ ResetMotor: motor null");
-            return false;
-        }
+        if (_motor == null) return LogFail("ResetMotor: motor null");
+
         try
         {
             if (_motor.ResetMotor())
             {
                 LogMessage("🔧 Đang khởi tạo lại motor sau reset...");
                 Thread.Sleep(500);
+
                 bool ok = _motor.Initialize();
-                LogMessage(ok ? "✅ Motor đã được khởi tạo lại sau reset" : "❌ Không thể khởi tạo lại motor sau reset");
+                LogMessage(ok ? "✅ Motor đã được khởi tạo lại" : "❌ Khởi tạo lại motor thất bại");
                 return ok;
             }
-            else
-            {
-                LogMessage("❌ ResetNode failed in ResetMotor");
-                return false;
-            }
+
+            LogMessage("❌ ResetMotor: ResetNode thất bại");
+            return false;
         }
         catch (Exception ex)
         {
-            LogMessage($"❌ Exception ResetMotor: {ex.Message}");
+            LogMessage($"❌ ResetMotor error: {ex.Message}");
             return false;
         }
     }
 
     public bool ResetFaultAndEnable(int waitAfterResetMs = 200)
     {
-        if (_motor == null)
-        {
-            LogMessage("❌ ResetFaultAndEnable: motor null");
-            return false;
-        }
+        if (_motor == null) return LogFail("ResetFaultAndEnable: motor null");
 
         try
         {
             LogMessage("🔁 Reset lỗi và bật lại motor...");
             if (!ResetFault())
             {
-                LogMessage("⚠️ Reset lỗi thất bại, không thể bật motor.");
+                LogMessage("⚠️ Reset lỗi thất bại, không thể bật motor");
                 return false;
             }
 
             Thread.Sleep(waitAfterResetMs);
-
             bool enabled = _motor.EnableOperation();
-            LogMessage(enabled ? "✅ Motor đã được bật (Operation Enabled)" : "❌ Không bật được motor sau reset");
+
+            LogMessage(enabled ? "✅ Motor đã bật (Operation Enabled)" : "❌ Không bật được motor sau reset");
             return enabled;
         }
         catch (Exception ex)
         {
-            LogMessage($"❌ Exception ResetFaultAndEnable: {ex.Message}");
+            LogMessage($"❌ ResetFaultAndEnable error: {ex.Message}");
             return false;
         }
     }
 
-    public bool StopMotor()
-    {
-        if (_motor == null)
-        {
-            LogMessage("❌ StopMotor: motor null");
-            return false;
-        }
-        try
-        {
-            bool ok = _motor.StopMotor();
-            LogMessage(ok ? "✅ Motor đã dừng" : "❌ Không thể dừng motor");
-            return ok;
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"❌ Exception StopMotor: {ex.Message}");
-            return false;
-        }
-    }
+    #endregion
+
+    #region Đọc dữ liệu trạng thái
+
+    public double GetPosition() => _motor?.GetActualPositionRad() ?? 0;
+    public double GetVelocity() => _motor?.GetActualVelocityRpm() ?? 0;
+    public short GetTorque() => _motor?.GetActualTorque() ?? 0;
+    public string GetStatusDescription() => _motor?.GetStatusDescription() ?? "No data";
+
+    #endregion
+
+    #region Logging
 
     public void LogSend(string frame)
     {
@@ -302,22 +257,6 @@ public class MotorManager
         OnCanFrameReceived?.Invoke(frame);
     }
 
-    public void Disconnect()
-    {
-        try
-        {
-            _can?.Disconnect();
-            _can = null;
-            _motor = null;
-            IsConnected = false;
-            GC.SuppressFinalize(this);
-            LogMessage("✅ Disconnected from CAN");
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"❌ Disconnect error: {ex.Message}");
-        }
-    }
     public void LogMessage(string msg)
     {
         OnCanLog?.Invoke(new CanLogEntry
@@ -328,4 +267,11 @@ public class MotorManager
         });
     }
 
+    private bool LogFail(string msg)
+    {
+        LogMessage($"❌ {msg}");
+        return false;
+    }
+
+    #endregion
 }

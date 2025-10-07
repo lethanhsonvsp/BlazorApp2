@@ -7,7 +7,7 @@
 <style>
     .grid-container {
         display: grid;
-        grid-template-columns: 1fr 1fr 1fr; /* 3 cột */
+        grid-template-columns: 1fr 1fr 1fr;
         grid-auto-rows: auto;
         gap: 20px;
         padding: 10px;
@@ -21,7 +21,6 @@
         box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
     }
 
-    /* Hàng 1: trạng thái (1 cột), điều khiển (2 cột) */
     .item-status {
         grid-column: span 1;
     }
@@ -56,7 +55,6 @@
     <div class="grid-item item-status">
         <h3>Trạng thái</h3>
         <p>@(Manager.IsConnected ? "✅ Đã kết nối CAN" : "❌ Chưa kết nối")</p>
-
         <h5>Giá trị hiện tại</h5>
         <p>Vị trí: @position.ToString("F2")</p>
         <p>Vận tốc: @velocity.ToString("F2")</p>
@@ -64,11 +62,10 @@
         <h3>Status: @statusDesc</h3>
     </div>
 
-    <!-- 1.2 Các nút điều khiển -->
+    <!-- 1.2 Điều khiển -->
     <div class="grid-item item-control">
         <h5>Điều khiển</h5>
 
-        <!-- Fault & Enable -->
         <div class="mb-3">
             <div class="btn-group mb-2" role="group">
                 <button class="btn btn-primary" @onclick="DoConnect">Connect CAN</button>
@@ -79,15 +76,12 @@
                 <button class="btn btn-secondary" @onclick="DoResetMotor">Reset Motor</button>
             </div>
             <div class="btn-group mb-2" role="group">
-                <button class="btn btn-success" @onclick="DoReadEncoderResolution">Read Enc</button>
                 <button class="btn btn-success" @onclick="DoEnableMotor">Enable Motor</button>
                 <button class="btn btn-danger" @onclick="DoStopMotor">StopMotor</button>
                 <button class="btn btn-info" @onclick="DoQuitMotor">QuitMotor</button>
                 <button class="btn btn-warning" @onclick="DoDisableMotor">Disable Motor</button>
             </div>
-
         </div>
-
 
         <!-- Homing -->
         <div class="mb-3">
@@ -103,15 +97,15 @@
             <label>Move to Position</label>
             <div class="input-group mb-1">
                 <span class="input-group-text">Pos</span>
-                <input @bind="targetPosition" type="number" step="0.01" min="-100000" max="100000" class="form-control" />
+                <input @bind="targetPosition" type="number" step="0.01" class="form-control" />
                 <span class="input-group-text">Vel</span>
-                <input @bind="profileVel" type="number" step="0.01" min="-5000" max="5000" class="form-control" />
+                <input @bind="profileVel" type="number" step="0.01" class="form-control" />
             </div>
             <div class="input-group mb-1">
                 <span class="input-group-text">Acc</span>
-                <input @bind="acceleration" type="number" step="0.01" min="-5000" max="5000" class="form-control" />
+                <input @bind="acceleration" type="number" step="0.01" class="form-control" />
                 <span class="input-group-text">Dec</span>
-                <input @bind="deceleration" type="number" step="0.01" min="-5000" max="5000" class="form-control" />
+                <input @bind="deceleration" type="number" step="0.01" class="form-control" />
                 <button class="btn btn-primary" @onclick="DoMove">Move</button>
             </div>
         </div>
@@ -120,7 +114,7 @@
         <div class="mb-3">
             <label>Set Velocity</label>
             <div class="input-group">
-                <input @bind="targetVel" type="number" min="1" max="5000" class="form-control" />
+                <input @bind="targetVel" type="number" class="form-control" />
                 <button class="btn btn-primary" @onclick="DoSetVelocity">Apply</button>
             </div>
         </div>
@@ -135,10 +129,10 @@
         </div>
     </div>
 
-    <!-- 2.1 CANopen Send -->
+    <!-- 2.1 TX -->
     <div class="grid-item">
         <h5>CANopen Send (TX)</h5>
-        <div class="log-box">
+        <div class="log-box" id="txBox">
             @foreach (var log in txLogs)
             {
                 <div class="tx">[@log.Timestamp:HH:mm:ss] → @log.Frame</div>
@@ -146,10 +140,10 @@
         </div>
     </div>
 
-    <!-- 2.2 CANopen Receive -->
+    <!-- 2.2 RX -->
     <div class="grid-item">
         <h5>CANopen Receive (RX)</h5>
-        <div class="log-box">
+        <div class="log-box" id="rxBox">
             @foreach (var log in rxLogs)
             {
                 <div class="rx">[@log.Timestamp:HH:mm:ss] ← @log.Frame</div>
@@ -160,7 +154,7 @@
     <!-- 2.3 Log Message -->
     <div class="grid-item">
         <h5>Log Message</h5>
-        <div class="log-box">
+        <div class="log-box" id="logBox">
             @foreach (var log in logMessages)
             {
                 <div>@($"[{log.Timestamp:HH:mm:ss}] {log.Msg}")</div>
@@ -170,51 +164,24 @@
 </div>
 
 @code {
-    double position = 0;
-    double velocity = 0;
-    double torque = 0;
-
+    double position = 0, velocity = 0, torque = 0;
     int homingMethod = 35;
-    double targetPosition = 0;
-    uint profileVel = 20;
-    uint acceleration = 100;
-    uint deceleration = 100;
-    uint targetVel = 0;
-    short targetTorque = 0;
-
-    private string statusDesc = "Đang chờ dữ liệu...";
-    private System.Threading.PeriodicTimer? _timer;
-    private CancellationTokenSource? _cts;
+    double targetPosition = 0, profileVel = 20, acceleration = 100, deceleration = 100;
+    double targetVel = 0, targetTorque = 0;
+    string statusDesc = "Đang chờ dữ liệu...";
 
     List<CanLogEntry> txLogs = new();
     List<CanLogEntry> rxLogs = new();
     List<CanLogEntry> logMessages = new();
 
-    System.Timers.Timer? timer;
-
-    // lưu frame RX cuối cùng để tránh duplicate
     string? _lastRxFrame = null;
+    System.Threading.CancellationTokenSource? _cts;
 
     protected override void OnInitialized()
     {
-        // update position, velocity, torque
-        timer = new System.Timers.Timer(1000);
-        timer.Elapsed += async (s, e) => await InvokeAsync(UpdateStatus);
-        timer.Start();
+        _cts = new System.Threading.CancellationTokenSource();
+        _ = Task.Run(() => UpdateLoop(_cts.Token));
 
-        // update status description
-        _cts = new CancellationTokenSource();
-        _timer = new System.Threading.PeriodicTimer(TimeSpan.FromMilliseconds(500));
-        _ = UpdateLoop(_cts.Token);
-
-        // Lắng nghe frame từ CANInterface
-        // CANInterface.CANFrameReceived += (sender, frame) =>
-        // {
-        //     // Gọi ProcessPDOMessage với dữ liệu frame
-        //     CANInterface.ProcessPDOMessage(frame);
-        // };
-
-        // log handler
         Manager.OnCanLog += (entry) =>
         {
             InvokeAsync(() =>
@@ -226,7 +193,6 @@
                 }
                 else if (entry.Direction == "RX")
                 {
-                    // chỉ log khi khác frame trước đó
                     if (_lastRxFrame != entry.Frame)
                     {
                         rxLogs.Insert(0, entry);
@@ -235,7 +201,6 @@
                     }
                 }
 
-                // Log message (giữ tất cả)
                 logMessages.Insert(0, entry);
                 if (logMessages.Count > 200) logMessages.RemoveAt(logMessages.Count - 1);
 
@@ -244,41 +209,43 @@
         };
     }
 
-    async Task UpdateStatus()
-    {
-        try
-        {
-            await Task.Run(() =>
-            {
-                position = Manager.GetPosition();
-                velocity = Manager.GetVelocity();
-                torque = Manager.GetTorque();
-            });
-            StateHasChanged();
-        }
-        catch { }
-    }
-
     private async Task UpdateLoop(CancellationToken token)
     {
         try
         {
-            while (await _timer!.WaitForNextTickAsync(token))
+            while (!token.IsCancellationRequested)
             {
-                statusDesc = Manager.GetStatusDescription();
-                await InvokeAsync(StateHasChanged);
+                double newPos = Manager.GetPosition();
+                double newVel = Manager.GetVelocity();
+                double newTorque = Manager.GetTorque();
+                string newStatus = Manager.GetStatusDescription();
+
+                bool changed = false;
+
+                if (Math.Abs(newPos - position) > 0.001) { position = newPos; changed = true; }
+                if (Math.Abs(newVel - velocity) > 0.001) { velocity = newVel; changed = true; }
+                if (Math.Abs(newTorque - torque) > 0.001) { torque = newTorque; changed = true; }
+                if (newStatus != statusDesc) { statusDesc = newStatus; changed = true; }
+
+                if (changed)
+                    await InvokeAsync(StateHasChanged);
+
+                await Task.Delay(500, token);
             }
         }
-        catch (OperationCanceledException)
-        {
-            // ignore
-        }
+        catch (OperationCanceledException) { }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
     }
 
     void DoHoming() => Manager.StartHoming((byte)homingMethod);
-    void DoMove() => Manager.MoveToPosition(targetPosition, profileVel, acceleration, deceleration);
+    void DoMove() => Manager.MoveToPosition(targetPosition, (uint)profileVel, (uint)acceleration, (uint)deceleration);
     void DoSetVelocity() => Manager.SetVelocity(targetVel);
-    void DoSetTorque() => Manager.SetTorque(targetTorque);
+    void DoSetTorque() => Manager.SetTorque((short)targetTorque);
     void DoResetFault() => Manager.ResetFault();
     void DoResetMotor() => Manager.ResetMotor();
     void DoEnableMotor() => Manager.ResetFaultAndEnable();
@@ -287,6 +254,5 @@
     void DoStopMotor() => Manager.StopMotor();
     void DoDisableMotor() => Manager.DisableMotor();
     void DoQuitMotor() => Manager.QuickStop();
-    void DoReadEncoderResolution() => Manager.ReadEncoderResolution();
 
 }
