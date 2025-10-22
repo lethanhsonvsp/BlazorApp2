@@ -6,4 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="SocketCANSharp" Version="0.13.0" />
+  </ItemGroup>
+
 </Project>

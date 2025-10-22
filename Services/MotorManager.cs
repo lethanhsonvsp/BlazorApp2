@@ -32,7 +32,7 @@ public class MotorManager
 
         try
         {
-            IsConnected = _can.Connect("can0", 500000, 1);
+            IsConnected = _can.Connect("can0", 500000);
             if (!IsConnected)
             {
                 LogMessage("❌ Không thể kết nối CAN interface");
